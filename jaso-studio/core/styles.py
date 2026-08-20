@@ -39,8 +39,9 @@ GLOBAL_CSS = f"""
       linear-gradient(180deg, rgba(6,10,20,.68) 0%, rgba(8,13,26,.84) 30vh,
                       rgba(10,17,32,.95) 62vh, {BG} 96vh);
 }}
-/* 배경 영상 iframe을 전체 화면 배경으로 고정 (레이아웃 공간 차지 없음) */
-iframe[data-testid="stIFrame"] {{
+/* 배경 영상 iframe(srcdoc 방식)만 전체 화면 배경으로 고정 —
+   쿠키 매니저 등 다른 컴포넌트 iframe(src 방식)에는 영향 없음 */
+iframe[data-testid="stIFrame"][srcdoc] {{
     position: fixed !important; inset: 0 !important;
     width: 100vw !important; height: 100vh !important;
     z-index: -2 !important; border: 0 !important;

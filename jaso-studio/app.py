@@ -337,13 +337,36 @@ with st.sidebar:
         unsafe_allow_html=True)
 
     st.markdown("##### 연결 설정")
+
+    # ── API 키 기억 (브라우저 쿠키, 30일) ──
+    _cookie_mgr = None
+    _saved_key = ""
+    try:
+        import extra_streamlit_components as stx
+        _cookie_mgr = stx.CookieManager(key="jaso_cookies")
+        _saved_key = _cookie_mgr.get("jaso_api_key") or ""
+    except Exception:
+        _cookie_mgr = None
+
     api_key = st.text_input("Anthropic API 키", type="password",
-                            value=_secret("ANTHROPIC_API_KEY"),
-                            help="키는 저장되지 않습니다")
+                            value=_secret("ANTHROPIC_API_KEY") or _saved_key,
+                            help="키는 이 브라우저에만 저장됩니다")
     st.markdown('<div style="font-size:.78rem;margin:-.4rem 0 .6rem;">'
                 '<a href="https://console.anthropic.com/settings/keys" target="_blank" '
                 'style="color:#C9A96A;text-decoration:none;">→ Anthropic API 키 발급 바로가기</a></div>',
                 unsafe_allow_html=True)
+    if _cookie_mgr is not None:
+        remember = st.checkbox("이 브라우저에 키 기억하기 (30일)",
+                               value=True, key="remember_key")
+        try:
+            if remember and api_key.strip() and api_key.strip() != _saved_key:
+                _cookie_mgr.set("jaso_api_key", api_key.strip(),
+                                expires_at=datetime.datetime.now() + datetime.timedelta(days=30),
+                                key="cookie_set")
+            elif not remember and _saved_key:
+                _cookie_mgr.delete("jaso_api_key", key="cookie_del")
+        except Exception:
+            pass
     model_label = st.selectbox("모델", list(engine.MODEL_CHOICES.keys()) + ["직접 입력"])
     if model_label == "직접 입력":
         model = st.text_input("모델 ID", value=engine.DEFAULT_MODEL)
@@ -429,6 +452,8 @@ if _step == 1:
     st.text_area("채용공고 붙여넣기 (선택 — 자격요건·우대사항이 있으면 분석 정확도가 올라갑니다)",
                  key="in_posting", height=110)
 
+    speed = st.radio("분석 모드", ["⚡ 빠른 분석 (권장 · 약 20~40초)", "🔬 정밀 분석 (검색 많음 · 1~2분)"],
+                     horizontal=True, label_visibility="collapsed")
     run_research = st.button("🔍  실시간 기업 분석 시작", type="primary", use_container_width=True)
 
     if run_research:
@@ -437,8 +462,8 @@ if _step == 1:
             st.warning("기업명을 입력해 주세요.")
         elif _require_key():
             dart_text = ""
-            if dart_key.strip():
-                with st.spinner("DART 전자공시에서 기업 정보를 가져오는 중…"):
+            if dart_key.strip() and not st.session_state.get("dart_disabled"):
+                with st.spinner("DART 전자공시 확인 중…"):
                     try:
                         corps = load_dart_corps(dart_key)
                         snap = engine.dart_snapshot(dart_key, corps, company)
@@ -446,19 +471,24 @@ if _step == 1:
                         dart_text = engine.dart_snapshot_to_text(snap)
                     except engine.EngineError:
                         st.session_state.dart_snap = None
-                        st.caption("ℹ️ DART 전자공시 연결 불가 환경 — 웹 검색으로 재무·공시를 대신 조사합니다.")
-            with st.spinner("웹에서 최신 뉴스·전략·인재상을 조사하는 중… (약 30초~1분)"):
-                try:
-                    result = engine.research_company(
+                        st.session_state.dart_disabled = True  # 이 세션에서는 재시도 안 함
+                        st.caption("ℹ️ DART 연결 불가 환경 — 웹 검색으로 대신 조사합니다.")
+            try:
+                status = {}
+                with st.container(border=True):
+                    st.caption("실시간으로 조사하며 작성 중… (아래에 바로 표시됩니다)")
+                    md = st.write_stream(engine.research_company_stream(
                         engine.get_client(api_key), model, company,
                         st.session_state.get("in_role", ""),
-                        st.session_state.get("in_posting", ""), dart_text)
-                    st.session_state.research_md = result["markdown"]
-                    st.session_state.research_meta = (
-                        f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} 기준"
-                        + (" · 웹 검색 사용" if result["used_search"] else " · ⚠ 웹 검색 미지원 키 — 일반 지식 기반"))
-                except engine.EngineError as e:
-                    st.error(str(e))
+                        st.session_state.get("in_posting", ""), dart_text,
+                        fast=speed.startswith("⚡"), status=status))
+                st.session_state.research_md = md or ""
+                st.session_state.research_meta = (
+                    f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} 기준"
+                    + (" · ⚠ 웹 검색 미지원 키 — 일반 지식 기반" if status.get("fallback") else " · 웹 검색 사용"))
+                st.rerun()
+            except engine.EngineError as e:
+                st.error(str(e))
 
     snap = st.session_state.dart_snap
     if snap and snap.get("found"):
@@ -500,17 +530,20 @@ if _step == 1:
         if not company:
             st.warning("기업명을 먼저 입력해 주세요.")
         elif _require_key():
-            with st.spinner("공개 합격 자소서를 검색·분석하는 중… (약 30초~1분)"):
-                try:
-                    result = engine.analyze_pass_essays(
+            try:
+                status = {}
+                with st.container(border=True):
+                    st.caption("공개 합격 자소서를 검색·분석 중… (아래에 바로 표시됩니다)")
+                    md = st.write_stream(engine.analyze_pass_essays_stream(
                         engine.get_client(api_key), model, company,
-                        st.session_state.get("in_role", ""))
-                    st.session_state.pass_md = result["markdown"]
-                    st.session_state.pass_meta = (
-                        f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} 기준"
-                        + (" · 웹 검색 사용" if result["used_search"] else " · ⚠ 웹 검색 미지원 키 — 일반 지식 기반"))
-                except engine.EngineError as e:
-                    st.error(str(e))
+                        st.session_state.get("in_role", ""), status=status))
+                st.session_state.pass_md = md or ""
+                st.session_state.pass_meta = (
+                    f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} 기준"
+                    + (" · ⚠ 웹 검색 미지원 키 — 일반 지식 기반" if status.get("fallback") else " · 웹 검색 사용"))
+                st.rerun()
+            except engine.EngineError as e:
+                st.error(str(e))
     if st.session_state.pass_md:
         st.caption(st.session_state.pass_meta + " · 합격자 문장은 베끼지 않고 패턴만 반영합니다")
         with st.container(border=True):

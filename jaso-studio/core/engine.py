@@ -274,9 +274,53 @@ def refine_answer(client, model: str, *, question: str, prev_answer: str,
 # 기업 리서치 (Claude 웹서치)
 # ──────────────────────────────────────────────
 
+def _stream_with_search(client, model: str, system: str, user: str,
+                        max_tokens: int, max_searches: int, status: dict):
+    """웹서치 스트리밍 제너레이터. 미지원 키/모델이면 검색 없이 폴백.
+    status dict에 'fallback' 표시."""
+    kwargs = dict(model=model, max_tokens=max_tokens, system=system,
+                  messages=[{"role": "user", "content": user}])
+    tools = [{"type": WEB_SEARCH_TOOL_TYPE, "name": "web_search", "max_uses": max_searches}]
+    try:
+        with client.messages.stream(**kwargs, tools=tools) as s:
+            for t in s.text_stream:
+                yield t
+        return
+    except anthropic.BadRequestError:
+        status["fallback"] = True
+    except Exception as e:
+        raise _friendly_api_error(e)
+    try:
+        with client.messages.stream(**kwargs) as s:
+            for t in s.text_stream:
+                yield t
+    except Exception as e:
+        raise _friendly_api_error(e)
+
+
+def research_company_stream(client, model: str, company: str, role: str,
+                            posting: str = "", dart_text: str = "",
+                            fast: bool = True, status: dict = None):
+    """기업 분석 스트리밍 — st.write_stream에 바로 넣는다."""
+    user = prompts.build_research_prompt(company, role, posting, dart_text, fast=fast)
+    return _stream_with_search(client, model, prompts.RESEARCH_SYSTEM, user,
+                               max_tokens=3500 if fast else 7000,
+                               max_searches=3 if fast else 8,
+                               status=status if status is not None else {})
+
+
+def analyze_pass_essays_stream(client, model: str, company: str, role: str,
+                               status: dict = None):
+    """합격 자소서 패턴 분석 스트리밍."""
+    user = prompts.build_pass_prompt(company, role)
+    return _stream_with_search(client, model, prompts.PASS_SYSTEM, user,
+                               max_tokens=5000, max_searches=5,
+                               status=status if status is not None else {})
+
+
 def research_company(client, model: str, company: str, role: str,
                      posting: str = "", dart_text: str = ""):
-    user = prompts.build_research_prompt(company, role, posting, dart_text)
+    user = prompts.build_research_prompt(company, role, posting, dart_text, fast=False)
     text, used_search = call_claude(
         client, model, prompts.RESEARCH_SYSTEM,
         [{"role": "user", "content": user}],
@@ -559,7 +603,7 @@ def dart_load_corp_map(dart_key: str):
     """전체 기업 코드 목록 다운로드 (호출측에서 캐시 권장)."""
     try:
         r = requests.get(f"{DART_BASE}/corpCode.xml",
-                         params={"crtfc_key": dart_key.strip()}, timeout=20)
+                         params={"crtfc_key": dart_key.strip()}, timeout=8)
         r.raise_for_status()
         zf = zipfile.ZipFile(io.BytesIO(r.content))
         xml_data = zf.read(zf.namelist()[0])

@@ -130,14 +130,36 @@ FIT_SYSTEM = """당신은 기업 채용 담당자 출신의 직무 적합도 진
 # 사용자 프롬프트 빌더
 # ──────────────────────────────────────────────
 
-def build_research_prompt(company: str, role: str, posting: str, dart_text: str) -> str:
+def build_research_prompt(company: str, role: str, posting: str, dart_text: str,
+                          fast: bool = True) -> str:
     parts = [f"'{company}' 기업을 '{role or '미정'}' 직무 지원자 관점에서 조사하라.",
              "웹 검색을 사용해 최신 사실을 확인하라."]
+    if fast:
+        parts.append("검색은 3회 이내로 끝내고, 각 섹션은 핵심만 간결하게 쓴다. 속도가 중요하다.")
     if dart_text:
         parts.append(f"\n[DART 전자공시 확인 데이터 — 그대로 신뢰하고 활용]\n{dart_text}")
     if posting:
         parts.append(f"\n[사용자가 제공한 채용공고]\n{posting[:3000]}")
-    parts.append(f"""
+    if fast:
+        parts.append(f"""
+아래 마크다운 형식으로 간결하게 정리하라.
+
+## 한눈 요약
+(3줄 이내 — 사업 구조·최근 실적 흐름 포함)
+
+## 최근 핵심 뉴스·전략
+(날짜 포함 5개 이내. 신사업·투자·수주 중심, 수치 포함)
+
+## 인재상·채용 맥락
+(핵심만 3줄 이내)
+
+## 지원동기 연결 포인트 TOP 5
+(각 항목을 "회사의 구체 사실 → 지원자가 연결할 방향" 구조로. 자소서에 바로 인용 가능한 수치 포함)
+
+## 출처
+(제목 — URL 목록)""")
+    else:
+        parts.append(f"""
 아래 마크다운 형식으로 정리하라.
 
 ## 한눈 요약
