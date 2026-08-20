@@ -76,27 +76,39 @@ def _friendly_api_error(e: Exception) -> EngineError:
     return EngineError(f"알 수 없는 오류가 발생했습니다: {raw[:250]}")
 
 
+def _create_with_pause_loop(client, base_kwargs: dict, messages: list, max_rounds: int = 5):
+    """웹 검색 사용 시 stop_reason=pause_turn(검색만 하고 턴 일시정지)이면
+    assistant 내용을 이어붙여 끝까지 완성한다. 전체 텍스트를 합쳐 반환."""
+    msgs = list(messages)
+    texts = []
+    for _ in range(max_rounds):
+        resp = client.messages.create(**base_kwargs, messages=msgs)
+        texts.append(_extract_text(resp))
+        if getattr(resp, "stop_reason", "") == "pause_turn":
+            msgs = msgs + [{"role": "assistant", "content": resp.content}]
+            continue
+        break
+    return "\n".join(t for t in texts if t).strip()
+
+
 def call_claude(client, model: str, system: str, messages: list,
                 max_tokens: int = 8000, web_search: bool = False,
                 max_searches: int = 6, temperature: float = 0.7):
     """반환: (텍스트, 웹서치_실제사용여부)
     주의: temperature 인자는 하위 호환용으로만 남겨두고 API에는 보내지 않는다 —
     Claude 5 계열 모델은 temperature 파라미터를 거부한다(400)."""
-    kwargs = dict(model=model, max_tokens=max_tokens, system=system,
-                  messages=messages)
+    kwargs = dict(model=model, max_tokens=max_tokens, system=system)
     if web_search:
         kwargs["tools"] = [{"type": WEB_SEARCH_TOOL_TYPE, "name": "web_search",
                             "max_uses": max_searches}]
     try:
-        resp = client.messages.create(**kwargs)
-        return _extract_text(resp), web_search
+        return _create_with_pause_loop(client, kwargs, messages), web_search
     except anthropic.BadRequestError as e:
         if web_search:
             # 웹서치 도구를 지원하지 않는 키/모델 → 검색 없이 폴백
             kwargs.pop("tools", None)
             try:
-                resp = client.messages.create(**kwargs)
-                return _extract_text(resp), False
+                return _create_with_pause_loop(client, kwargs, messages), False
             except Exception as e2:
                 raise _friendly_api_error(e2)
         raise _friendly_api_error(e)
@@ -276,26 +288,42 @@ def refine_answer(client, model: str, *, question: str, prev_answer: str,
 
 def _stream_with_search(client, model: str, system: str, user: str,
                         max_tokens: int, max_searches: int, status: dict):
-    """웹서치 스트리밍 제너레이터. 미지원 키/모델이면 검색 없이 폴백.
-    status dict에 'fallback' 표시."""
-    kwargs = dict(model=model, max_tokens=max_tokens, system=system,
-                  messages=[{"role": "user", "content": user}])
+    """웹서치 스트리밍 제너레이터.
+    - 미지원 키/모델이면 검색 없이 폴백 (status['fallback']=True)
+    - stop_reason=pause_turn(검색만 하고 턴 일시정지)이면 자동으로 이어받아 끝까지 작성
+    """
+    base = dict(model=model, max_tokens=max_tokens, system=system)
     tools = [{"type": WEB_SEARCH_TOOL_TYPE, "name": "web_search", "max_uses": max_searches}]
-    try:
-        with client.messages.stream(**kwargs, tools=tools) as s:
-            for t in s.text_stream:
-                yield t
-        return
-    except anthropic.BadRequestError:
-        status["fallback"] = True
-    except Exception as e:
-        raise _friendly_api_error(e)
-    try:
-        with client.messages.stream(**kwargs) as s:
-            for t in s.text_stream:
-                yield t
-    except Exception as e:
-        raise _friendly_api_error(e)
+    msgs = [{"role": "user", "content": user}]
+    use_tools = True
+    total = 0
+    for _round in range(6):
+        kwargs = dict(base, messages=msgs)
+        if use_tools:
+            kwargs["tools"] = tools
+        try:
+            with client.messages.stream(**kwargs) as s:
+                for t in s.text_stream:
+                    total += len(t)
+                    yield t
+                final = s.get_final_message()
+        except anthropic.BadRequestError as e:
+            if use_tools and total == 0:
+                use_tools = False
+                status["fallback"] = True
+                continue
+            raise _friendly_api_error(e)
+        except Exception as e:
+            raise _friendly_api_error(e)
+        if getattr(final, "stop_reason", "") == "pause_turn":
+            # 검색만 하고 멈춘 상태 — 지금까지의 내용을 이어붙여 계속 쓰게 한다
+            msgs = msgs + [{"role": "assistant", "content": final.content}]
+            yield "\n"
+            continue
+        break
+    if total == 0:
+        raise EngineError("분석 본문을 받지 못했습니다. 잠시 후 한 번 더 시도해 주세요. "
+                          "반복되면 '정밀 분석' 모드로 시도해 보세요.")
 
 
 def research_company_stream(client, model: str, company: str, role: str,
