@@ -529,7 +529,8 @@ def ai_scan(client, model: str, text: str) -> dict:
                          max_tokens=2000, temperature=0.1)
     data = _parse_json_loose(raw)
     llm_p = int(data.get("probability", 50))
-    percent = round(0.5 * heur["score"] + 0.5 * llm_p)
+    # 실제 감지기는 문체 통계 기반 — 통계 가중치를 높게 둔다
+    percent = round(0.65 * heur["score"] + 0.35 * llm_p)
     if percent <= 30:
         verdict = "안전"
     elif percent <= 60:
@@ -541,9 +542,8 @@ def ai_scan(client, model: str, text: str) -> dict:
             "flags": data.get("flags", []), "comment": data.get("comment", "")}
 
 
-def humanize_answer(client, model: str, *, question: str, prev_answer: str,
-                    limit: int, count_mode: str, flags: list):
-    """AI 티 제거 재작성. 분량 유지 보정 포함."""
+def _humanize_once(client, model: str, question: str, prev_answer: str,
+                   limit: int, count_mode: str, flags: list):
     system = _system_for_writing()
     user = prompts.build_humanize_prompt(question, prev_answer, limit, count_mode, flags)
     messages = [{"role": "user", "content": user}]
@@ -565,10 +565,33 @@ def humanize_answer(client, model: str, *, question: str, prev_answer: str,
         new_answer, new_notes = split_answer(raw)
         if new_answer:
             answer, notes = new_answer, (new_notes or notes)
+    return answer, notes
 
-    if not answer.strip():
-        raise EngineError("답변 생성에 실패했습니다(빈 응답). 다시 한 번 눌러 주세요.")
-    return {"answer": answer, "notes": notes, "chars": char_report(answer)}
+
+def humanize_answer(client, model: str, *, question: str, prev_answer: str,
+                    limit: int, count_mode: str, flags: list,
+                    target: int = 10, max_rounds: int = 3):
+    """AI 티 제거 재작성 — 감지 위험이 target% 이하가 될 때까지 자동 반복 (최대 max_rounds회).
+    반환 dict에 최종 scan 결과 포함."""
+    answer, notes = prev_answer, ""
+    cur_flags = list(flags or [])
+    scan = None
+    best = None  # (percent, answer, notes, scan)
+    for _ in range(max_rounds):
+        answer, new_notes = _humanize_once(client, model, question, answer,
+                                           limit, count_mode, cur_flags)
+        notes = new_notes or notes
+        if not answer.strip():
+            raise EngineError("답변 생성에 실패했습니다(빈 응답). 다시 한 번 눌러 주세요.")
+        scan = ai_scan(client, model, answer)
+        if best is None or scan["percent"] < best[0]:
+            best = (scan["percent"], answer, notes, scan)
+        if scan["percent"] <= target:
+            break
+        cur_flags = scan.get("flags", [])
+    # 반복 중 가장 낮았던 버전을 채택
+    _, answer, notes, scan = best
+    return {"answer": answer, "notes": notes, "chars": char_report(answer), "scan": scan}
 
 
 # ──────────────────────────────────────────────

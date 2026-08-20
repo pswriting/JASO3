@@ -77,6 +77,15 @@ for k, v in _DEFAULTS.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
+# ── 입력값 고정 ──
+# 단계형 화면에서는 현재 단계에 렌더되지 않은 위젯의 상태를 Streamlit이 지워버린다.
+# 매 실행마다 값을 세션 키로 재할당해 단계를 오가도 입력값이 유지되게 한다.
+_PERSIST_PREFIXES = ("in_", "sp_", "iv_", "q_text_", "q_limit_", "q_mode_",
+                     "q_hint_", "q_research_", "q_exp_", "q_mat_")
+for _k in list(st.session_state.keys()):
+    if isinstance(_k, str) and _k.startswith(_PERSIST_PREFIXES):
+        st.session_state[_k] = st.session_state[_k]
+
 EXP_FIELDS = [
     ("situation", "상황 — 언제, 어디서, 무슨 역할이었나요?",
      "예: JW메리어트 호텔 멤버십 세일즈 담당, 2021~2023"),
@@ -284,15 +293,16 @@ def _run_humanize(qid: int):
     if not ans:
         return
     flags = (ans.get("ai") or {}).get("flags", [])
-    with st.spinner("AI 티를 지우고 사람의 문장으로 다시 쓰는 중… (재검사 포함)"):
+    with st.spinner("AI 티를 지우고 사람의 문장으로 재작성 중… (10% 이하가 될 때까지 자동 반복, 최대 3회)"):
         try:
             client = engine.get_client(api_key)
             r = engine.humanize_answer(
                 client, model, question=ans["question"], prev_answer=ans["answer"],
-                limit=ans["limit"], count_mode=ans["count_mode"], flags=flags)
+                limit=ans["limit"], count_mode=ans["count_mode"], flags=flags,
+                target=10, max_rounds=3)
             ans.update(answer=r["answer"], chars=r["chars"],
                        notes=r["notes"] or ans.get("notes", ""))
-            ans["ai"] = engine.ai_scan(client, model, r["answer"])
+            ans["ai"] = r["scan"]
             ans["sim"] = None  # 본문이 바뀌었으므로 유사도 재검사 필요
             st.session_state.answers[qid] = ans
             st.rerun()
@@ -867,7 +877,7 @@ if _step == 4:
                     if details:
                         with st.expander("감지된 패턴 자세히"):
                             st.markdown("\n".join(details))
-                    st.caption("※ 자체 문체 통계와 AI 판독을 결합한 추정치입니다. 실제 감지기(GPTZero·카피킬러 등)의 결과와 다를 수 있습니다. 30% 이하를 목표로 보정하세요.")
+                    st.caption("※ 자체 문체 통계와 AI 판독을 결합한 추정치입니다. 실제 감지기(GPTZero·카피킬러 등)의 결과와 다를 수 있습니다. 'AI 티 제거'는 10% 이하가 될 때까지 자동 반복합니다.")
 
                 rc = st.columns([3, 1.2])
                 with rc[0]:
