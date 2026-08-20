@@ -76,19 +76,20 @@ def _friendly_api_error(e: Exception) -> EngineError:
     return EngineError(f"알 수 없는 오류가 발생했습니다: {raw[:250]}")
 
 
-def _create_with_pause_loop(client, base_kwargs: dict, messages: list, max_rounds: int = 5):
-    """웹 검색 사용 시 stop_reason=pause_turn(검색만 하고 턴 일시정지)이면
-    assistant 내용을 이어붙여 끝까지 완성한다. 전체 텍스트를 합쳐 반환."""
+def _create_with_pause_loop(client, base_kwargs: dict, messages: list, max_rounds: int = 6):
+    """pause_turn(검색만 하고 턴 일시정지)·max_tokens(중간 끊김)이면
+    assistant 내용을 이어붙여 끝까지 완성한다. 전체 텍스트를 이어서 반환."""
     msgs = list(messages)
-    texts = []
+    out = ""
     for _ in range(max_rounds):
         resp = client.messages.create(**base_kwargs, messages=msgs)
-        texts.append(_extract_text(resp))
-        if getattr(resp, "stop_reason", "") == "pause_turn":
+        out += _extract_text(resp)
+        reason = getattr(resp, "stop_reason", "")
+        if reason in ("pause_turn", "max_tokens"):
             msgs = msgs + [{"role": "assistant", "content": resp.content}]
             continue
         break
-    return "\n".join(t for t in texts if t).strip()
+    return out.strip()
 
 
 def call_claude(client, model: str, system: str, messages: list,
@@ -315,10 +316,10 @@ def _stream_with_search(client, model: str, system: str, user: str,
             raise _friendly_api_error(e)
         except Exception as e:
             raise _friendly_api_error(e)
-        if getattr(final, "stop_reason", "") == "pause_turn":
-            # 검색만 하고 멈춘 상태 — 지금까지의 내용을 이어붙여 계속 쓰게 한다
+        if getattr(final, "stop_reason", "") in ("pause_turn", "max_tokens"):
+            # pause_turn: 검색만 하고 멈춤 / max_tokens: 쓰다가 중간 끊김
+            # → 지금까지의 내용을 이어붙여 계속 쓰게 한다
             msgs = msgs + [{"role": "assistant", "content": final.content}]
-            yield "\n"
             continue
         break
     if total == 0:
@@ -332,7 +333,7 @@ def research_company_stream(client, model: str, company: str, role: str,
     """기업 분석 스트리밍 — st.write_stream에 바로 넣는다."""
     user = prompts.build_research_prompt(company, role, posting, dart_text, fast=fast)
     return _stream_with_search(client, model, prompts.RESEARCH_SYSTEM, user,
-                               max_tokens=3500 if fast else 7000,
+                               max_tokens=5000 if fast else 8000,
                                max_searches=3 if fast else 8,
                                status=status if status is not None else {})
 
@@ -625,13 +626,20 @@ def uniquify_answer(client, model: str, *, question: str, prev_answer: str,
 # ──────────────────────────────────────────────
 
 DART_BASE = "https://opendart.fss.or.kr/api"
+# DART 방화벽이 python 기본 User-Agent를 거부하는 경우가 있어 브라우저 UA로 요청
+DART_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"),
+    "Accept": "*/*",
+}
 
 
 def dart_load_corp_map(dart_key: str):
     """전체 기업 코드 목록 다운로드 (호출측에서 캐시 권장)."""
     try:
         r = requests.get(f"{DART_BASE}/corpCode.xml",
-                         params={"crtfc_key": dart_key.strip()}, timeout=8)
+                         params={"crtfc_key": dart_key.strip()},
+                         headers=DART_HEADERS, timeout=30)
         r.raise_for_status()
         zf = zipfile.ZipFile(io.BytesIO(r.content))
         xml_data = zf.read(zf.namelist()[0])
@@ -669,7 +677,8 @@ def dart_find_corp(corps: list, name: str):
 def _dart_get(dart_key: str, endpoint: str, **params):
     params["crtfc_key"] = dart_key.strip()
     try:
-        return requests.get(f"{DART_BASE}/{endpoint}", params=params, timeout=20).json()
+        return requests.get(f"{DART_BASE}/{endpoint}", params=params,
+                            headers=DART_HEADERS, timeout=12).json()
     except requests.RequestException:
         return {"status": "err"}
 
