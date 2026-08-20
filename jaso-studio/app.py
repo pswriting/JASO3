@@ -67,6 +67,8 @@ _DEFAULTS = {
     "doc_sigs": [],
     "research_md": "",
     "research_meta": "",
+    "pass_md": "",
+    "pass_meta": "",
     "dart_snap": None,
     "fit": None,
     "_loaded_sig": "",
@@ -162,6 +164,7 @@ def _export_session() -> str:
         "materials": st.session_state.materials,
         "uploaded_docs": st.session_state.uploaded_docs,
         "research_md": st.session_state.research_md,
+        "pass_md": st.session_state.pass_md,
         "fit": st.session_state.fit,
     }
     return json.dumps(data, ensure_ascii=False, indent=1)
@@ -187,6 +190,7 @@ def _import_session(data: dict):
     st.session_state.materials = data.get("materials", [])
     st.session_state.uploaded_docs = data.get("uploaded_docs", [])
     st.session_state.research_md = data.get("research_md", "")
+    st.session_state.pass_md = data.get("pass_md", "")
     st.session_state.fit = data.get("fit", None)
 
 
@@ -214,7 +218,8 @@ def _generate_one(qdata: dict, idx: int, quiet: bool = False):
                 interview=interview, hint=qdata["hint"],
                 research_md=research, fit_summary=fit_sum,
                 live_search=live, is_freeform=qdata["is_freeform"],
-                materials_text=mat_text)
+                materials_text=mat_text,
+                pass_analysis=(st.session_state.pass_md if qdata["use_research"] else ""))
             st.session_state.answers[qdata["id"]] = {
                 "question": qdata["text"], "answer": result["answer"],
                 "notes": result["notes"], "chars": result["chars"],
@@ -439,9 +444,9 @@ if _step == 1:
                         snap = engine.dart_snapshot(dart_key, corps, company)
                         st.session_state.dart_snap = snap
                         dart_text = engine.dart_snapshot_to_text(snap)
-                    except engine.EngineError as e:
+                    except engine.EngineError:
                         st.session_state.dart_snap = None
-                        st.info(str(e), icon="ℹ️")
+                        st.caption("ℹ️ DART 전자공시 연결 불가 환경 — 웹 검색으로 재무·공시를 대신 조사합니다.")
             with st.spinner("웹에서 최신 뉴스·전략·인재상을 조사하는 중… (약 30초~1분)"):
                 try:
                     result = engine.research_company(
@@ -485,6 +490,31 @@ if _step == 1:
             "아직 분석 결과가 없습니다",
             "기업명과 직무를 입력하고 '실시간 기업 분석 시작'을 눌러 주세요. 분석 결과는 지원동기 작성에 자동으로 반영됩니다."),
             unsafe_allow_html=True)
+
+    # ── 합격 자소서 패턴 분석 ──
+    st.markdown(styles.divider(), unsafe_allow_html=True)
+    st.markdown(styles.overline("—", "합격 자소서 패턴 분석", "이 기업·직무 합격자들은 어떻게 썼나"), unsafe_allow_html=True)
+    st.caption("웹에 공개된 합격 자소서·후기를 실시간으로 찾아 공통 소재·구조·키워드를 추출합니다. 분석 결과는 자소서 생성에 자동 반영됩니다.")
+    if st.button("🏆  합격 자소서 패턴 분석 시작", use_container_width=True):
+        company = st.session_state.get("in_company", "").strip()
+        if not company:
+            st.warning("기업명을 먼저 입력해 주세요.")
+        elif _require_key():
+            with st.spinner("공개 합격 자소서를 검색·분석하는 중… (약 30초~1분)"):
+                try:
+                    result = engine.analyze_pass_essays(
+                        engine.get_client(api_key), model, company,
+                        st.session_state.get("in_role", ""))
+                    st.session_state.pass_md = result["markdown"]
+                    st.session_state.pass_meta = (
+                        f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} 기준"
+                        + (" · 웹 검색 사용" if result["used_search"] else " · ⚠ 웹 검색 미지원 키 — 일반 지식 기반"))
+                except engine.EngineError as e:
+                    st.error(str(e))
+    if st.session_state.pass_md:
+        st.caption(st.session_state.pass_meta + " · 합격자 문장은 베끼지 않고 패턴만 반영합니다")
+        with st.container(border=True):
+            st.markdown(st.session_state.pass_md)
 
 
 # ══════════════════════════════════════════════

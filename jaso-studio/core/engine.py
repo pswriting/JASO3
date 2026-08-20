@@ -79,9 +79,11 @@ def _friendly_api_error(e: Exception) -> EngineError:
 def call_claude(client, model: str, system: str, messages: list,
                 max_tokens: int = 8000, web_search: bool = False,
                 max_searches: int = 6, temperature: float = 0.7):
-    """반환: (텍스트, 웹서치_실제사용여부)"""
+    """반환: (텍스트, 웹서치_실제사용여부)
+    주의: temperature 인자는 하위 호환용으로만 남겨두고 API에는 보내지 않는다 —
+    Claude 5 계열 모델은 temperature 파라미터를 거부한다(400)."""
     kwargs = dict(model=model, max_tokens=max_tokens, system=system,
-                  messages=messages, temperature=temperature)
+                  messages=messages)
     if web_search:
         kwargs["tools"] = [{"type": WEB_SEARCH_TOOL_TYPE, "name": "web_search",
                             "max_uses": max_searches}]
@@ -190,7 +192,7 @@ def generate_answer(client, model: str, *, company: str, role: str, question: st
                     limit: int, count_mode: str, interview: dict, hint: str = "",
                     research_md: str = "", fit_summary: str = "",
                     live_search: bool = False, is_freeform: bool = False,
-                    materials_text: str = ""):
+                    materials_text: str = "", pass_analysis: str = ""):
     """
     반환 dict: answer, notes, used_search, chars(incl/excl), attempts
     live_search: 리서치 자료가 없을 때 생성 단계에서 직접 웹 검색을 수행할지
@@ -199,7 +201,7 @@ def generate_answer(client, model: str, *, company: str, role: str, question: st
         company=company, role=role, question=question, limit=limit,
         count_mode=count_mode, interview=interview, hint=hint,
         research_md=research_md, fit_summary=fit_summary, is_freeform=is_freeform,
-        materials_text=materials_text)
+        materials_text=materials_text, pass_analysis=pass_analysis)
     if live_search and not research_md:
         user += ("\n\n추가 지시: 회사 리서치 자료가 없으므로, 웹 검색으로 "
                  f"'{company}'의 최신 사실(실적·신사업·전략) 2~3개를 확인해 지원동기 근거로 인용하라. "
@@ -278,7 +280,17 @@ def research_company(client, model: str, company: str, role: str,
     text, used_search = call_claude(
         client, model, prompts.RESEARCH_SYSTEM,
         [{"role": "user", "content": user}],
-        max_tokens=7000, web_search=True, max_searches=8, temperature=0.3)
+        max_tokens=7000, web_search=True, max_searches=8)
+    return {"markdown": text, "used_search": used_search}
+
+
+def analyze_pass_essays(client, model: str, company: str, role: str):
+    """기업·직무별 공개 합격 자소서 패턴 분석 (실시간 웹 검색)."""
+    user = prompts.build_pass_prompt(company, role)
+    text, used_search = call_claude(
+        client, model, prompts.PASS_SYSTEM,
+        [{"role": "user", "content": user}],
+        max_tokens=6000, web_search=True, max_searches=8)
     return {"markdown": text, "used_search": used_search}
 
 

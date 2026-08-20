@@ -218,7 +218,8 @@ def build_interview_block(interview: dict) -> str:
 
 def build_answer_prompt(company: str, role: str, question: str, limit: int, count_mode: str,
                         interview: dict, hint: str, research_md: str, fit_summary: str,
-                        is_freeform: bool = False, materials_text: str = "") -> str:
+                        is_freeform: bool = False, materials_text: str = "",
+                        pass_analysis: str = "") -> str:
     lo = int(limit * 0.92)
     mode_txt = "공백 포함" if count_mode == "incl" else "공백 제외"
     blocks = [
@@ -236,6 +237,8 @@ def build_answer_prompt(company: str, role: str, question: str, limit: int, coun
         blocks.append(f"\n[기업 리서치 자료 — 지원동기·포부에 구체 사실로 인용]\n{research_md[:4000]}")
     if fit_summary:
         blocks.append(f"\n[직무 적합도 진단 요약 — 강점은 살리고 보완점은 방어]\n{fit_summary[:1500]}")
+    if pass_analysis:
+        blocks.append(f"\n[이 기업·직무 합격 자소서 패턴 분석 — 체크리스트를 반영하되 합격자 문장을 베끼지 마라]\n{pass_analysis[:2500]}")
     if is_freeform:
         blocks.append(f"\n{FREEFORM_CAREER_GUIDE}")
     blocks.append("""
@@ -297,8 +300,45 @@ def build_mine_prompt(company: str, role: str, docs_text: str, spec: dict,
 
 
 # ──────────────────────────────────────────────
-# 소재 발굴 도우미 — 기억 자극 질문
+# 합격 자소서 패턴 분석
 # ──────────────────────────────────────────────
+
+PASS_SYSTEM = """당신은 합격 자기소개서 데이터 분석가다.
+웹에 공개된 합격 자소서·합격 후기(잡코리아 합격자소서, 링커리어, 캐치, 슈퍼루키, 블로그 후기 등)를
+검색해 '합격자들의 공통 패턴'을 추출한다.
+- 반드시 웹 검색으로 실제 공개 자료를 확인하고, 출처를 남긴다.
+- 합격자 문장을 그대로 옮기지 않는다. 구조·소재 유형·키워드 '패턴'만 추출한다.
+- 표본이 적으면 적다고 밝히고, 같은 직군·산업의 합격 패턴으로 보완한다.
+- 한국어로, 지정된 마크다운 형식만 출력한다."""
+
+
+def build_pass_prompt(company: str, role: str) -> str:
+    return f"""'{company}' '{role or "해당 직무"}' 합격 자기소개서들을 웹에서 검색해 분석하라.
+검색 예: "{company} {role} 합격 자소서", "{company} 합격자소서", "{company} {role} 서류 합격 후기".
+해당 기업 표본이 부족하면 같은 산업·직군의 합격 자소서로 보완하고 그 사실을 명시하라.
+
+아래 마크다운 형식으로 정리하라.
+
+## 표본 요약
+(확인한 합격 자소서·후기 개수와 출처 성격. 표본이 적으면 명시)
+
+## 합격자들의 공통 소재 유형
+(어떤 경험을 들고 왔는가 — 유형별로. 예: 정량 성과가 있는 아르바이트, 직무 프로젝트)
+
+## 합격 답변의 구조 패턴
+(두괄식 여부, 소제목 스타일, 문단 전개, 분량 활용)
+
+## 반복 등장 키워드·역량
+({company} 인재상·직무 키워드와 어떻게 연결했는가)
+
+## 문항별 경향
+(이 기업 대표 문항별로 합격자들이 쓴 방향)
+
+## 이 지원자가 따라야 할 체크리스트
+(위 패턴에서 뽑은 실행 지침 5가지 — 자소서 생성 시 바로 반영 가능한 형태)
+
+## 출처
+(제목 — URL 목록)"""
 
 HELPER_SYSTEM = """당신은 취업 준비생의 묻혀 있는 경험을 끌어내는 인터뷰 코치다.
 '쓸 경험이 없다'고 말하는 사람도 반드시 갖고 있는 기억을 자극하는 질문을 만든다.
