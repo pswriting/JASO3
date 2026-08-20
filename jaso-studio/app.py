@@ -10,7 +10,7 @@ import pathlib
 
 import streamlit as st
 
-from core import engine, styles, exporter, reader
+from core import engine, styles, exporter, reader, templates
 
 # ──────────────────────────────────────────────
 # 페이지 설정
@@ -201,6 +201,11 @@ def _import_session(data: dict):
     st.session_state.research_md = data.get("research_md", "")
     st.session_state.pass_md = data.get("pass_md", "")
     st.session_state.fit = data.get("fit", None)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_template(key: str) -> bytes:
+    return templates.TEMPLATES[key][2]()
 
 
 def _generate_one(qdata: dict, idx: int, quiet: bool = False):
@@ -984,6 +989,23 @@ if _step == 5:
         with d2:
             st.download_button("⬇️  TXT로 다운로드", exporter.build_txt(company, role, items),
                                file_name=f"{fname}.txt", mime="text/plain",
+                               use_container_width=True)
+
+    # ── 합격 이력서·경력기술서 양식 ──
+    st.markdown(styles.divider(), unsafe_allow_html=True)
+    st.markdown(styles.overline("—", "합격 이력서·경력기술서 양식",
+                                "워드(.docx) 파일 — 한글(HWP)에서도 그대로 열립니다"),
+                unsafe_allow_html=True)
+    st.caption("회색 예시 문구를 본인 내용으로 바꿔 쓰면 됩니다. 모든 성과는 숫자로 끝내는 것이 원칙입니다.")
+    _tcols = st.columns(len(templates.TEMPLATES))
+    _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    for _i, (_key, (_title, _desc, _)) in enumerate(templates.TEMPLATES.items()):
+        with _tcols[_i]:
+            st.markdown(f"**{_title}**")
+            st.caption(_desc)
+            st.download_button("⬇️  다운로드", _cached_template(_key),
+                               file_name=f"{_title.replace(' ', '')}.docx",
+                               mime=_DOCX_MIME, key=f"tpl_{_key}",
                                use_container_width=True)
 
 # ──────────────────────────────────────────────

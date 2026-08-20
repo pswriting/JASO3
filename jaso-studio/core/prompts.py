@@ -56,6 +56,12 @@ STYLE_CONSTITUTION = """당신은 대한민국 최상위 자기소개서 첨삭 
 ━━━ 제5조. 금지 사항 ━━━
 - 클리셰 금지: "어릴 적부터", "귀사", "글로벌 인재", "밑거름", "일취월장",
   "성실함이 무기", "누구보다", "최선을 다하는", "아낌없는 노력".
+- 영어 직역 은어·어색한 외래어 금지: "콜드 컨택", "콜드 콜", "페인 포인트", "터치포인트",
+  "팔로업", "얼라인", "레버리지", "인사이트 도출", "시너지 창출", "캐파", "니즈 충족",
+  "온보딩", "그라운드 룰" 류의 표현은 인사담당자가 읽는 문서에 어색하다 — 자연스러운
+  우리말로 풀어 쓴다. (예: 콜드 컨택 → 접점이 없던 고객에게 먼저 연락 / 팔로업 → 후속 확인)
+  단, 직무 필수 전문용어·지표·직함·제품명(ROAS, KPI, CRM, PM, MD, ERP 등)은 그대로 쓴다.
+- 위 원칙의 일반형: 한국 직장인이 입으로 말할 때 쓰지 않을 번역투 단어 결합은 쓰지 않는다.
 - 사실 창작 금지: 지원자가 제공하지 않은 수치·수상·회사명·직책을 절대 지어내지 않는다.
   결과 수치가 없으면 정성적 사실로 서술하고, 대신 출력 마지막 NOTES에
   "이 자리에 ○○ 수치를 채우면 설득력이 올라간다"고 제안한다.
@@ -72,10 +78,13 @@ STYLE_CONSTITUTION = """당신은 대한민국 최상위 자기소개서 첨삭 
 - 전개 구조는 따르되 문장 표현은 매번 새로 쓴다. 같은 지원서 안에서 동일 문형을 반복하지 않는다.
 - 리서치 자료가 없으면 회사 관련 단정적 수치를 쓰지 말고, 직무·산업 차원의 논리로 쓴다.
 
-━━━ 제7조. 분량 ━━━
+━━━ 제7조. 분량과 문단 ━━━
 - 지정된 목표 글자수를 정확히 지킨다. 목표의 92~100% 사이. 절대 초과 금지.
 - 소제목 줄도 글자수에 포함된다.
 - 분량이 길수록 행동·장면 묘사를 늘리고, 분량이 짧을수록 결론·결과 중심으로 압축한다.
+- 문단 수 규칙(문항별 지시에 명시된 개수를 반드시 따른다):
+  500자 이하 1문단 / 700~1000자 2문단 / 1500자 이하 3문단 / 2000자 이상은 500자당 1문단.
+  문단 사이는 빈 줄 하나. 재작성·수정 시에도 기존 문단 개수를 유지한다.
 
 ━━━ 출력 형식 ━━━
 아래 형식 그대로 출력한다. 다른 말은 일절 붙이지 않는다.
@@ -241,17 +250,30 @@ def build_interview_block(interview: dict) -> str:
     return "\n\n".join(lines) if lines else "(입력된 소재 없음 — 아래 다른 재료만 사용)"
 
 
+def paragraph_count(limit: int) -> int:
+    """사용자(첨삭 전문가)의 문단 규칙: 500자↓ 1 / 1000자↓ 2 / 1500자↓ 3 / 2000자↑ 500자당 1."""
+    if limit <= 500:
+        return 1
+    if limit <= 1000:
+        return 2
+    if limit <= 1500:
+        return 3
+    return max(4, round(limit / 500))
+
+
 def build_answer_prompt(company: str, role: str, question: str, limit: int, count_mode: str,
                         interview: dict, hint: str, research_md: str, fit_summary: str,
                         is_freeform: bool = False, materials_text: str = "",
                         pass_analysis: str = "") -> str:
     lo = int(limit * 0.92)
     mode_txt = "공백 포함" if count_mode == "incl" else "공백 제외"
+    n_para = paragraph_count(limit)
     blocks = [
         f"[지원 기업] {company or '미정'}",
         f"[지원 직무] {role or '미정'}",
         f"[문항] {question}",
         f"[목표 분량] {mode_txt} {lo}~{limit}자 (초과 절대 금지)",
+        f"[문단 규칙] 본문은 정확히 {n_para}개 문단. 문단 사이는 빈 줄 하나.",
         f"\n[지원자 소재 데이터]\n{build_interview_block(interview)}",
     ]
     if materials_text.strip():
