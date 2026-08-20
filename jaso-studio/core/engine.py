@@ -76,6 +76,14 @@ def _friendly_api_error(e: Exception) -> EngineError:
     return EngineError(f"알 수 없는 오류가 발생했습니다: {raw[:250]}")
 
 
+def _continuable_content(content):
+    """이어쓰기용 assistant 콘텐츠 — 마지막 thinking 블록은 API가 거부하므로 제거."""
+    blocks = list(content or [])
+    while blocks and getattr(blocks[-1], "type", "") in ("thinking", "redacted_thinking"):
+        blocks.pop()
+    return blocks
+
+
 def _create_with_pause_loop(client, base_kwargs: dict, messages: list, max_rounds: int = 6):
     """pause_turn(검색만 하고 턴 일시정지)·max_tokens(중간 끊김)이면
     assistant 내용을 이어붙여 끝까지 완성한다. 전체 텍스트를 이어서 반환."""
@@ -86,7 +94,10 @@ def _create_with_pause_loop(client, base_kwargs: dict, messages: list, max_round
         out += _extract_text(resp)
         reason = getattr(resp, "stop_reason", "")
         if reason in ("pause_turn", "max_tokens"):
-            msgs = msgs + [{"role": "assistant", "content": resp.content}]
+            cont = _continuable_content(resp.content)
+            if not cont:
+                break
+            msgs = msgs + [{"role": "assistant", "content": cont}]
             continue
         break
     return out.strip()
@@ -318,8 +329,11 @@ def _stream_with_search(client, model: str, system: str, user: str,
             raise _friendly_api_error(e)
         if getattr(final, "stop_reason", "") in ("pause_turn", "max_tokens"):
             # pause_turn: 검색만 하고 멈춤 / max_tokens: 쓰다가 중간 끊김
-            # → 지금까지의 내용을 이어붙여 계속 쓰게 한다
-            msgs = msgs + [{"role": "assistant", "content": final.content}]
+            # → 지금까지의 내용을 이어붙여 계속 쓰게 한다 (마지막 thinking 블록은 제거)
+            cont = _continuable_content(final.content)
+            if not cont:
+                break
+            msgs = msgs + [{"role": "assistant", "content": cont}]
             continue
         break
     if total == 0:
@@ -634,30 +648,37 @@ DART_HEADERS = {
 }
 
 
-def dart_load_corp_map(dart_key: str):
-    """전체 기업 코드 목록 다운로드 (호출측에서 캐시 권장)."""
+def dart_search_corps(name: str):
+    """DART 웹 기업명 검색으로 고유번호 조회.
+    대용량 corpCode.xml 다운로드(해외 서버에서 타임아웃)를 대체하는 가벼운 방식."""
     try:
-        r = requests.get(f"{DART_BASE}/corpCode.xml",
-                         params={"crtfc_key": dart_key.strip()},
-                         headers=DART_HEADERS, timeout=30)
+        r = requests.get("https://dart.fss.or.kr/dsae001/search.ax",
+                         params={"textCrpNm": name},
+                         headers=DART_HEADERS, timeout=12)
         r.raise_for_status()
-        zf = zipfile.ZipFile(io.BytesIO(r.content))
-        xml_data = zf.read(zf.namelist()[0])
-    except zipfile.BadZipFile:
-        raise EngineError("DART API 키가 올바르지 않습니다. opendart.fss.or.kr에서 발급한 키인지 확인해 주세요.")
+        html = r.text
+        if "select(" not in html:
+            try:
+                html = r.content.decode("euc-kr", errors="replace")
+            except Exception:
+                pass
     except requests.RequestException:
         raise EngineError(
-            "DART 전자공시에 연결하지 못해 이번 분석에서는 건너뜁니다 — "
-            "해외 서버(Streamlit Cloud 등)에서는 DART가 접속을 차단하는 경우가 있습니다. "
+            "DART 기업 검색에 연결하지 못해 이번 분석에서는 건너뜁니다. "
             "웹 검색으로 재무·공시 정보를 대신 조사하므로 분석은 정상 진행됩니다.")
-    root = ET.fromstring(xml_data)
-    corps = []
-    for el in root.iter("list"):
-        corps.append({
-            "name": (el.findtext("corp_name") or "").strip(),
-            "code": (el.findtext("corp_code") or "").strip(),
-            "stock": (el.findtext("stock_code") or "").strip(),
-        })
+    corps, seen = [], set()
+    for m in re.finditer(r"select\('(\d{8})'\)", html):
+        code = m.group(1)
+        if code in seen:
+            continue
+        window = html[m.start(): m.start() + 600]
+        nm_m = re.search(r">\s*([^<>\n\r]{1,60}?)\s*</", window)
+        nm = nm_m.group(1).strip() if nm_m else ""
+        st_m = re.search(r">\s*(\d{6})\s*</", window)
+        stock = st_m.group(1) if st_m else ""
+        if nm:
+            seen.add(code)
+            corps.append({"name": nm, "code": code, "stock": stock})
     return corps
 
 
@@ -697,8 +718,9 @@ def _fmt_krw(s):
     return f"{sign}{v:,}원"
 
 
-def dart_snapshot(dart_key: str, corps: list, company: str) -> dict:
+def dart_snapshot(dart_key: str, company: str) -> dict:
     """기업개요 + 최근 재무 + 최근 공시를 한 번에. 실패해도 부분 결과 반환."""
+    corps = dart_search_corps(company)
     corp = dart_find_corp(corps, company)
     if not corp:
         return {"found": False, "reason": "DART에서 해당 기업명을 찾지 못했습니다. 정식 법인명으로 다시 시도해 보세요."}

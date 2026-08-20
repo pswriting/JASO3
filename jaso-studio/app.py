@@ -194,11 +194,6 @@ def _import_session(data: dict):
     st.session_state.fit = data.get("fit", None)
 
 
-@st.cache_data(show_spinner=False, ttl=86400)
-def load_dart_corps(key: str):
-    return engine.dart_load_corp_map(key)
-
-
 def _generate_one(qdata: dict, idx: int, quiet: bool = False):
     company = st.session_state.get("in_company", "")
     role = st.session_state.get("in_role", "")
@@ -468,14 +463,13 @@ if _step == 1:
             if dart_key.strip() and not st.session_state.get("dart_disabled"):
                 with st.spinner("DART 전자공시 확인 중…"):
                     try:
-                        corps = load_dart_corps(dart_key)
-                        snap = engine.dart_snapshot(dart_key, corps, company)
+                        snap = engine.dart_snapshot(dart_key, company)
                         st.session_state.dart_snap = snap
                         dart_text = engine.dart_snapshot_to_text(snap)
                     except engine.EngineError:
                         st.session_state.dart_snap = None
                         st.session_state.dart_disabled = True  # 이 세션에서는 재시도 안 함
-                        st.caption("ℹ️ DART 연결 불가 환경 — 웹 검색으로 대신 조사합니다.")
+                        st.caption("ℹ️ DART 연결 불가 — 웹 검색으로 대신 조사합니다.")
             try:
                 status = {}
                 with st.container(border=True):
