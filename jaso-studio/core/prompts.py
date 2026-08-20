@@ -213,7 +213,8 @@ def build_interview_block(interview: dict) -> str:
         "co_reason": "이 회사에 끌린 개인적 계기",
         "co_goal": "입사 후 목표(단기·장기)",
         "co_spec": "직무 관련 핵심 스펙 요약",
-        "extra_free": "추가 재료(이력서·경력기술·기존 자소서 등)",
+        "extra_free": "추가 재료(자유 메모)",
+        "uploaded_docs": "업로드 문서에서 추출한 내용(이력서·경력기술서·기존 자소서)",
     }
     lines = []
     for key, label in labels.items():
