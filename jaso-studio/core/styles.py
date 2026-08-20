@@ -70,6 +70,29 @@ h1, h2, h3 {{
 .stMarkdown a {{ color: {GOLD}; }}
 [data-testid="stHeader"] {{ background: transparent; }}
 #MainMenu, footer, [data-testid="stToolbar"] {{ visibility: hidden; }}
+/* 사이드바 접힘/펼침 버튼 — 어두운 배경에서도 항상 보이게 */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"],
+[data-testid="stExpandSidebarButton"],
+[data-testid="stHeader"] button {{
+    color: {INK} !important;
+    background: rgba(12,20,37,.85) !important;
+    border: 1px solid rgba(201,169,106,.55) !important;
+    border-radius: 999px !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}}
+[data-testid="stSidebarCollapsedControl"] svg,
+[data-testid="collapsedControl"] svg,
+[data-testid="stExpandSidebarButton"] svg,
+[data-testid="stHeader"] button svg {{
+    fill: {GOLD} !important;
+    color: {GOLD} !important;
+}}
+[data-testid="stSidebarCollapsedControl"] span,
+[data-testid="stExpandSidebarButton"] span {{
+    color: {GOLD} !important;
+}}
 [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p,
 .stCaption, small {{ color: {MUTED} !important; }}
 [data-testid="stWidgetLabel"] p {{ color: #D6DBE7 !important; font-size: .85rem; text-shadow: 0 1px 6px rgba(0,0,0,.5); }}
