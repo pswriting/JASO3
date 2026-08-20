@@ -339,15 +339,15 @@ with st.sidebar:
     st.markdown("##### 연결 설정")
 
     # ── API 키 기억 (브라우저 쿠키, 30일) ──
-    _cookie_mgr = None
-    _saved_key = ""
-    try:
-        import extra_streamlit_components as stx
-        _cookie_mgr = stx.CookieManager(key="jaso_cookies")
-        _saved_key = _cookie_mgr.get("jaso_api_key") or ""
-    except Exception:
-        _cookie_mgr = None
+    # 컴포넌트 값 보고로 인한 재실행(rerun)이 분석을 끊지 않도록,
+    # 읽기는 st.context.cookies(요청 헤더), 쓰기는 순수 JS로 처리한다.
+    def _saved_cookie_key() -> str:
+        try:
+            return st.context.cookies.get("jaso_api_key", "") or ""
+        except Exception:
+            return ""
 
+    _saved_key = _saved_cookie_key()
     api_key = st.text_input("Anthropic API 키", type="password",
                             value=_secret("ANTHROPIC_API_KEY") or _saved_key,
                             help="키는 이 브라우저에만 저장됩니다")
@@ -355,18 +355,21 @@ with st.sidebar:
                 '<a href="https://console.anthropic.com/settings/keys" target="_blank" '
                 'style="color:#C9A96A;text-decoration:none;">→ Anthropic API 키 발급 바로가기</a></div>',
                 unsafe_allow_html=True)
-    if _cookie_mgr is not None:
-        remember = st.checkbox("이 브라우저에 키 기억하기 (30일)",
-                               value=True, key="remember_key")
-        try:
-            if remember and api_key.strip() and api_key.strip() != _saved_key:
-                _cookie_mgr.set("jaso_api_key", api_key.strip(),
-                                expires_at=datetime.datetime.now() + datetime.timedelta(days=30),
-                                key="cookie_set")
-            elif not remember and _saved_key:
-                _cookie_mgr.delete("jaso_api_key", key="cookie_del")
-        except Exception:
-            pass
+    remember = st.checkbox("이 브라우저에 키 기억하기 (30일)", value=True, key="remember_key")
+    try:
+        import streamlit.components.v1 as _cmp
+        _k = api_key.strip()
+        if remember and _k and _k != _saved_key and st.session_state.get("_ck_written") != _k:
+            _cmp.html(f'<script>parent.document.cookie = "jaso_api_key=" + '
+                      f'encodeURIComponent({json.dumps(_k)}) + '
+                      f'"; max-age=2592000; path=/; SameSite=Lax";</script>', height=0)
+            st.session_state["_ck_written"] = _k
+        elif not remember and _saved_key:
+            _cmp.html('<script>parent.document.cookie = '
+                      '"jaso_api_key=; max-age=0; path=/";</script>', height=0)
+            st.session_state.pop("_ck_written", None)
+    except Exception:
+        pass
     model_label = st.selectbox("모델", list(engine.MODEL_CHOICES.keys()) + ["직접 입력"])
     if model_label == "직접 입력":
         model = st.text_input("모델 ID", value=engine.DEFAULT_MODEL)
@@ -486,9 +489,15 @@ if _step == 1:
                 st.session_state.research_meta = (
                     f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} 기준"
                     + (" · ⚠ 웹 검색 미지원 키 — 일반 지식 기반" if status.get("fallback") else " · 웹 검색 사용"))
-                st.rerun()
+                _done = True
             except engine.EngineError as e:
+                _done = False
                 st.error(str(e))
+            except Exception as e:  # 어떤 오류든 조용히 사라지지 않게
+                _done = False
+                st.error(f"예상치 못한 오류가 발생했습니다: {type(e).__name__} — {e}")
+            if _done:
+                st.rerun()
 
     snap = st.session_state.dart_snap
     if snap and snap.get("found"):
@@ -541,9 +550,15 @@ if _step == 1:
                 st.session_state.pass_meta = (
                     f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} 기준"
                     + (" · ⚠ 웹 검색 미지원 키 — 일반 지식 기반" if status.get("fallback") else " · 웹 검색 사용"))
-                st.rerun()
+                _pdone = True
             except engine.EngineError as e:
+                _pdone = False
                 st.error(str(e))
+            except Exception as e:
+                _pdone = False
+                st.error(f"예상치 못한 오류가 발생했습니다: {type(e).__name__} — {e}")
+            if _pdone:
+                st.rerun()
     if st.session_state.pass_md:
         st.caption(st.session_state.pass_meta + " · 합격자 문장은 베끼지 않고 패턴만 반영합니다")
         with st.container(border=True):

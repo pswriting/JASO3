@@ -39,9 +39,8 @@ GLOBAL_CSS = f"""
       linear-gradient(180deg, rgba(6,10,20,.68) 0%, rgba(8,13,26,.84) 30vh,
                       rgba(10,17,32,.95) 62vh, {BG} 96vh);
 }}
-/* 배경 영상 iframe(srcdoc 방식)만 전체 화면 배경으로 고정 —
-   쿠키 매니저 등 다른 컴포넌트 iframe(src 방식)에는 영향 없음 */
-iframe[data-testid="stIFrame"][srcdoc] {{
+/* 배경 영상 iframe만 전체 화면 배경으로 고정 (다른 컴포넌트 iframe에는 영향 없음) */
+iframe[data-testid="stIFrame"][srcdoc*="js-bg-video-marker"] {{
     position: fixed !important; inset: 0 !important;
     width: 100vw !important; height: 100vh !important;
     z-index: -2 !important; border: 0 !important;
@@ -476,7 +475,7 @@ def video_iframe_html(mp4_b64: str = "", webm_b64: str = "") -> str:
     iframe 자체는 부모 CSS(iframe[data-testid="stIFrame"])가 전체 화면 배경으로 고정한다.
     """
     return f"""<!DOCTYPE html>
-<html><head><style>
+<html><head><meta name="js-bg-video-marker" content="1"><style>
 html,body{{margin:0;padding:0;background:transparent;overflow:hidden;}}
 video{{position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;
        filter:saturate(112%) brightness(.9);}}
