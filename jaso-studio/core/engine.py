@@ -84,6 +84,9 @@ def _continuable_content(content):
     return blocks
 
 
+THINKING_OFF = {"type": "disabled"}  # Claude 5는 적응형 생각이 기본 ON — 끄면 빠르고 출력이 안정적
+
+
 def _create_with_pause_loop(client, base_kwargs: dict, messages: list, max_rounds: int = 6):
     """pause_turn(검색만 하고 턴 일시정지)·max_tokens(중간 끊김)이면
     assistant 내용을 이어붙여 끝까지 완성한다. 전체 텍스트를 이어서 반환."""
@@ -95,9 +98,9 @@ def _create_with_pause_loop(client, base_kwargs: dict, messages: list, max_round
         reason = getattr(resp, "stop_reason", "")
         if reason in ("pause_turn", "max_tokens"):
             cont = _continuable_content(resp.content)
-            if not cont:
-                break
-            msgs = msgs + [{"role": "assistant", "content": cont}]
+            if cont:
+                msgs = msgs + [{"role": "assistant", "content": cont}]
+            # cont가 비면(생각만 하다 끝남) 같은 요청을 그대로 재시도
             continue
         break
     return out.strip()
@@ -107,25 +110,30 @@ def call_claude(client, model: str, system: str, messages: list,
                 max_tokens: int = 8000, web_search: bool = False,
                 max_searches: int = 6, temperature: float = 0.7):
     """반환: (텍스트, 웹서치_실제사용여부)
-    주의: temperature 인자는 하위 호환용으로만 남겨두고 API에는 보내지 않는다 —
-    Claude 5 계열 모델은 temperature 파라미터를 거부한다(400)."""
-    kwargs = dict(model=model, max_tokens=max_tokens, system=system)
-    if web_search:
-        kwargs["tools"] = [{"type": WEB_SEARCH_TOOL_TYPE, "name": "web_search",
-                            "max_uses": max_searches}]
-    try:
-        return _create_with_pause_loop(client, kwargs, messages), web_search
-    except anthropic.BadRequestError as e:
-        if web_search:
-            # 웹서치 도구를 지원하지 않는 키/모델 → 검색 없이 폴백
-            kwargs.pop("tools", None)
-            try:
-                return _create_with_pause_loop(client, kwargs, messages), False
-            except Exception as e2:
-                raise _friendly_api_error(e2)
-        raise _friendly_api_error(e)
-    except Exception as e:
-        raise _friendly_api_error(e)
+    - temperature는 하위 호환용 인자일 뿐 API에는 보내지 않는다 (Claude 5가 거부)
+    - thinking은 기본 비활성화, 미지원 모델이면 자동으로 파라미터 제거 후 재시도
+    - 웹서치 미지원 키/모델이면 검색 없이 재시도"""
+    tools = [{"type": WEB_SEARCH_TOOL_TYPE, "name": "web_search", "max_uses": max_searches}]
+    attempts = [(web_search, True), (web_search, False), (False, True), (False, False)]
+    tried, last_err = set(), None
+    for use_tools, think_off in attempts:
+        sig = (use_tools, think_off)
+        if sig in tried:
+            continue
+        tried.add(sig)
+        kwargs = dict(model=model, max_tokens=max_tokens, system=system)
+        if use_tools:
+            kwargs["tools"] = tools
+        if think_off:
+            kwargs["thinking"] = THINKING_OFF
+        try:
+            return _create_with_pause_loop(client, kwargs, messages), use_tools
+        except anthropic.BadRequestError as e:
+            last_err = e
+            continue
+        except Exception as e:
+            raise _friendly_api_error(e)
+    raise _friendly_api_error(last_err)
 
 
 # ──────────────────────────────────────────────
@@ -258,6 +266,8 @@ def generate_answer(client, model: str, *, company: str, role: str, question: st
             notes = new_notes or notes
         attempts += 1
 
+    if not answer.strip():
+        raise EngineError("답변 생성에 실패했습니다(빈 응답). 다시 한 번 눌러 주세요.")
     return {
         "answer": answer,
         "notes": notes,
@@ -291,6 +301,8 @@ def refine_answer(client, model: str, *, question: str, prev_answer: str,
         if new_answer:
             answer, notes = new_answer, (new_notes or notes)
 
+    if not answer.strip():
+        raise EngineError("답변 생성에 실패했습니다(빈 응답). 다시 한 번 눌러 주세요.")
     return {"answer": answer, "notes": notes, "chars": char_report(answer)}
 
 
@@ -308,11 +320,14 @@ def _stream_with_search(client, model: str, system: str, user: str,
     tools = [{"type": WEB_SEARCH_TOOL_TYPE, "name": "web_search", "max_uses": max_searches}]
     msgs = [{"role": "user", "content": user}]
     use_tools = True
+    think_off = True
     total = 0
-    for _round in range(6):
+    for _round in range(8):
         kwargs = dict(base, messages=msgs)
         if use_tools:
             kwargs["tools"] = tools
+        if think_off:
+            kwargs["thinking"] = THINKING_OFF
         try:
             with client.messages.stream(**kwargs) as s:
                 for t in s.text_stream:
@@ -320,6 +335,9 @@ def _stream_with_search(client, model: str, system: str, user: str,
                     yield t
                 final = s.get_final_message()
         except anthropic.BadRequestError as e:
+            if think_off and "thinking" in str(e).lower():
+                think_off = False  # thinking 파라미터 미지원 모델
+                continue
             if use_tools and total == 0:
                 use_tools = False
                 status["fallback"] = True
@@ -331,9 +349,9 @@ def _stream_with_search(client, model: str, system: str, user: str,
             # pause_turn: 검색만 하고 멈춤 / max_tokens: 쓰다가 중간 끊김
             # → 지금까지의 내용을 이어붙여 계속 쓰게 한다 (마지막 thinking 블록은 제거)
             cont = _continuable_content(final.content)
-            if not cont:
-                break
-            msgs = msgs + [{"role": "assistant", "content": cont}]
+            if cont:
+                msgs = msgs + [{"role": "assistant", "content": cont}]
+            # cont가 비면(생각만 하다 끝남) 같은 요청을 그대로 재시도
             continue
         break
     if total == 0:
@@ -548,6 +566,8 @@ def humanize_answer(client, model: str, *, question: str, prev_answer: str,
         if new_answer:
             answer, notes = new_answer, (new_notes or notes)
 
+    if not answer.strip():
+        raise EngineError("답변 생성에 실패했습니다(빈 응답). 다시 한 번 눌러 주세요.")
     return {"answer": answer, "notes": notes, "chars": char_report(answer)}
 
 
@@ -632,6 +652,8 @@ def uniquify_answer(client, model: str, *, question: str, prev_answer: str,
         if new_answer:
             answer, notes = new_answer, (new_notes or notes)
 
+    if not answer.strip():
+        raise EngineError("답변 생성에 실패했습니다(빈 응답). 다시 한 번 눌러 주세요.")
     return {"answer": answer, "notes": notes, "chars": char_report(answer)}
 
 
