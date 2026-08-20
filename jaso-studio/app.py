@@ -3,8 +3,10 @@
 자소서 스튜디오 (JASO STUDIO) v2
 읽는 순간 뽑고 싶어지는 자기소개서 — 실시간 기업 분석 · 적합도 진단 · 소재 발굴 · AI 감지 방어
 """
+import base64
 import json
 import datetime
+import pathlib
 
 import streamlit as st
 
@@ -20,7 +22,28 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 st.markdown(styles.GLOBAL_CSS, unsafe_allow_html=True)
-st.markdown(styles.video_background(), unsafe_allow_html=True)
+
+
+@st.cache_data(show_spinner=False)
+def _media_b64(relpath: str, max_mb: float = 15.0) -> str:
+    """static 파일을 base64로 — 정적 서빙 설정 없이도 배경 영상이 나오게."""
+    p = pathlib.Path(__file__).parent / relpath
+    try:
+        if p.exists() and p.stat().st_size <= max_mb * 1024 * 1024:
+            return base64.b64encode(p.read_bytes()).decode()
+    except Exception:
+        pass
+    return ""
+
+
+_bg_mp4 = _media_b64("static/bg.mp4")
+_bg_webm = _media_b64("static/bg.webm")
+if _bg_mp4 or _bg_webm:
+    import streamlit.components.v1 as _components
+    _components.html(styles.video_iframe_html(_bg_mp4, _bg_webm), height=0)
+else:
+    st.markdown(styles.video_background("app/static/bg.mp4"), unsafe_allow_html=True)
+st.markdown(styles.overlay_div(), unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────
 # 세션 상태 초기화
@@ -251,7 +274,11 @@ with st.sidebar:
     st.markdown("##### 연결 설정")
     api_key = st.text_input("Anthropic API 키", type="password",
                             value=_secret("ANTHROPIC_API_KEY"),
-                            help="console.anthropic.com에서 발급 · 키는 저장되지 않습니다")
+                            help="키는 저장되지 않습니다")
+    st.markdown('<div style="font-size:.78rem;margin:-.4rem 0 .6rem;">'
+                '<a href="https://console.anthropic.com/settings/keys" target="_blank" '
+                'style="color:#C9A96A;text-decoration:none;">→ Anthropic API 키 발급 바로가기</a></div>',
+                unsafe_allow_html=True)
     model_label = st.selectbox("모델", list(engine.MODEL_CHOICES.keys()) + ["직접 입력"])
     if model_label == "직접 입력":
         model = st.text_input("모델 ID", value=engine.DEFAULT_MODEL)
@@ -260,7 +287,19 @@ with st.sidebar:
 
     dart_key = st.text_input("DART 전자공시 API 키 (선택)", type="password",
                              value=_secret("DART_API_KEY"),
-                             help="opendart.fss.or.kr에서 무료 발급 · 재무제표를 함께 분석합니다")
+                             help="상장사 재무제표·공시를 함께 분석합니다")
+    st.markdown('<div style="font-size:.78rem;margin:-.4rem 0 .2rem;">'
+                '<a href="https://opendart.fss.or.kr" target="_blank" '
+                'style="color:#C9A96A;text-decoration:none;">→ DART 인증키 무료 발급 바로가기</a></div>',
+                unsafe_allow_html=True)
+    with st.expander("DART 키 발급 방법 (약 1분)"):
+        st.markdown(
+            "1. [opendart.fss.or.kr](https://opendart.fss.or.kr) 접속\n"
+            "2. 우측 상단 **회원가입** (이메일 인증)\n"
+            "3. 로그인 후 상단 메뉴 **인증키 신청/관리 → 인증키 신청**\n"
+            "4. 사용 목적에 '기업 정보 조회' 정도로 적고 신청\n"
+            "5. **인증키 관리** 화면에 나온 40자리 키를 복사해 위 칸에 붙여넣기\n\n"
+            "무료이고, 신청 즉시 발급됩니다.")
 
     st.markdown("---")
     st.markdown("##### 작업 저장 / 불러오기")

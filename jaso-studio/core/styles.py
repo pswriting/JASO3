@@ -39,6 +39,14 @@ GLOBAL_CSS = f"""
       linear-gradient(180deg, rgba(7,12,24,.46) 0%, rgba(9,15,29,.74) 38vh,
                       rgba(10,17,32,.92) 78vh, {BG} 115vh);
 }}
+/* 배경 영상 iframe을 전체 화면 배경으로 고정 (레이아웃 공간 차지 없음) */
+iframe[data-testid="stIFrame"] {{
+    position: fixed !important; inset: 0 !important;
+    width: 100vw !important; height: 100vh !important;
+    z-index: -2 !important; border: 0 !important;
+    pointer-events: none !important;
+    display: block !important;
+}}
 
 /* ── 기본 ───────────────────────────── */
 html, body {{ background: {BG}; }}
@@ -186,7 +194,11 @@ div[data-baseweb="select"] span, div[data-baseweb="select"] input {{
     background: rgba(242,237,224,.12);
 }}
 .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {{
-    background-color: transparent;
+    background-color: transparent !important;
+}}
+/* 테마 설정이 없어도 기본(빨간) 탭 밑줄이 보이지 않게 */
+.stTabs [data-baseweb="tab-list"] > div:not([data-baseweb="tab"]):not([role="tab"]) {{
+    background-color: transparent !important;
 }}
 
 /* ── 컨테이너·익스팬더 (글래스 카드) ──── */
@@ -428,11 +440,63 @@ def nl2br(text: str) -> str:
     return esc(text).replace("\n\n", "<br><br>").replace("\n", "<br>")
 
 
-def video_background(video_url: str = "app/static/bg.mp4",
-                     poster_url: str = "app/static/bg_poster.jpg") -> str:
-    return (f'<video class="js-bgvid" autoplay muted loop playsinline preload="auto" '
-            f'poster="{poster_url}"><source src="{video_url}" type="video/mp4"></video>'
-            f'<div class="js-bgoverlay"></div>')
+def overlay_div() -> str:
+    return '<div class="js-bgoverlay"></div>'
+
+
+def video_background(video_src: str = "app/static/bg.mp4",
+                     poster_src: str = "") -> str:
+    """정적 서빙 경로용 폴백 (오버레이 별도)."""
+    poster = f' poster="{poster_src}"' if poster_src else ""
+    return (f'<video class="js-bgvid" src="{video_src}" autoplay muted loop playsinline '
+            f'preload="auto"{poster}></video>')
+
+
+def video_iframe_html(mp4_b64: str = "", webm_b64: str = "") -> str:
+    """
+    배경 영상 iframe 문서 — base64를 JS로 Blob 변환해 재생.
+    정적 파일 서빙 설정(.streamlit/config.toml) 없이도 영상이 항상 나온다.
+    mp4(H.264, Safari 포함 범용) + webm(VP9) 이중 소스 — 브라우저가 되는 쪽을 고른다.
+    iframe 자체는 부모 CSS(iframe[data-testid="stIFrame"])가 전체 화면 배경으로 고정한다.
+    """
+    return f"""<!DOCTYPE html>
+<html><head><style>
+html,body{{margin:0;padding:0;background:transparent;overflow:hidden;}}
+video{{position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;
+       filter:saturate(112%) brightness(.9);}}
+</style></head><body>
+<video id="v" muted autoplay loop playsinline preload="auto"></video>
+<script>
+(function(){{
+  function toUrl(b64, mime) {{
+    if (!b64) return null;
+    try {{
+      var bin = atob(b64);
+      var arr = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      return URL.createObjectURL(new Blob([arr], {{type: mime}}));
+    }} catch (e) {{ return null; }}
+  }}
+  var v = document.getElementById("v");
+  var sources = [];
+  var mp4 = toUrl("{mp4_b64}", "video/mp4");
+  var webm = toUrl("{webm_b64}", "video/webm");
+  if (mp4 && v.canPlayType('video/mp4; codecs="avc1.42E01E"')) sources.push([mp4, "video/mp4"]);
+  if (webm && v.canPlayType('video/webm; codecs="vp9"')) sources.push([webm, "video/webm"]);
+  if (!sources.length) {{ if (mp4) sources.push([mp4, "video/mp4"]); if (webm) sources.push([webm, "video/webm"]); }}
+  var i = 0;
+  function tryNext() {{
+    if (i >= sources.length) return;
+    v.src = sources[i][0]; i++;
+    v.load();
+    var p = v.play();
+    if (p && p.catch) p.catch(function(){{}});
+  }}
+  v.addEventListener("error", tryNext);
+  tryNext();
+}})();
+</script>
+</body></html>"""
 
 
 def hero_html() -> str:
