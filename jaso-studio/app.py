@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-자소서 스튜디오 (JASO STUDIO)
-읽는 순간 뽑고 싶어지는 자기소개서 — 실시간 기업 분석 · 직무 적합도 진단 · 합격 문체 자동 작성
+자소서 스튜디오 (JASO STUDIO) v2
+읽는 순간 뽑고 싶어지는 자기소개서 — 실시간 기업 분석 · 적합도 진단 · 소재 발굴 · AI 감지 방어
 """
 import json
 import datetime
@@ -20,6 +20,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 st.markdown(styles.GLOBAL_CSS, unsafe_allow_html=True)
+st.markdown(styles.video_background(), unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────
 # 세션 상태 초기화
@@ -27,7 +28,8 @@ st.markdown(styles.GLOBAL_CSS, unsafe_allow_html=True)
 _DEFAULTS = {
     "questions": [],          # [{id, is_freeform}]
     "q_seq": 0,
-    "answers": {},            # id -> {question, answer, subtitle, notes, chars, limit, count_mode}
+    "answers": {},            # id -> {question, answer, notes, chars, limit, count_mode, used_search, ai}
+    "materials": [],          # AI 발굴 소재
     "research_md": "",
     "research_meta": "",
     "dart_snap": None,
@@ -38,88 +40,24 @@ for k, v in _DEFAULTS.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-IV_KEYS = [
-    "exp1_situation", "exp1_problem", "exp1_cause", "exp1_action", "exp1_result", "exp1_apply",
-    "exp2_free",
+# 공통 프로필(소재 발굴 탭) 키 — 경험은 문항마다 따로 입력
+PROFILE_KEYS = [
     "me_strength", "me_weakness", "me_value", "me_reputation",
     "co_reason", "co_goal", "co_spec",
     "extra_free",
 ]
-
-
-def _secret(name: str) -> str:
-    try:
-        return st.secrets.get(name, "") or ""
-    except Exception:
-        return ""
-
-
-def _interview_dict() -> dict:
-    return {k: st.session_state.get(f"iv_{k}", "") for k in IV_KEYS}
-
-
-def _new_question(text: str = "", limit: int = 700, is_freeform: bool = False):
-    st.session_state.q_seq += 1
-    qid = st.session_state.q_seq
-    st.session_state.questions.append({"id": qid, "is_freeform": is_freeform})
-    st.session_state[f"q_text_{qid}"] = text
-    st.session_state[f"q_limit_{qid}"] = limit
-    st.session_state[f"q_mode_{qid}"] = "공백 포함"
-    st.session_state[f"q_hint_{qid}"] = ""
-    st.session_state[f"q_research_{qid}"] = True
-    return qid
-
-
-def _collect_question(qid: int) -> dict:
-    return {
-        "id": qid,
-        "text": st.session_state.get(f"q_text_{qid}", "").strip(),
-        "limit": int(st.session_state.get(f"q_limit_{qid}", 700)),
-        "count_mode": "incl" if st.session_state.get(f"q_mode_{qid}", "공백 포함") == "공백 포함" else "excl",
-        "hint": st.session_state.get(f"q_hint_{qid}", ""),
-        "use_research": bool(st.session_state.get(f"q_research_{qid}", True)),
-        "is_freeform": next((q.get("is_freeform", False) for q in st.session_state.questions if q["id"] == qid), False),
-    }
-
-
-def _export_session() -> str:
-    data = {
-        "meta": {"app": "jaso-studio", "saved": datetime.datetime.now().isoformat(timespec="seconds")},
-        "basic": {
-            "company": st.session_state.get("in_company", ""),
-            "role": st.session_state.get("in_role", ""),
-            "posting": st.session_state.get("in_posting", ""),
-        },
-        "interview": _interview_dict(),
-        "spec": {k: st.session_state.get(f"sp_{k}", "") for k in SPEC_FIELDS},
-        "questions": [_collect_question(q["id"]) for q in st.session_state.questions],
-        "answers": st.session_state.answers,
-        "research_md": st.session_state.research_md,
-        "fit": st.session_state.fit,
-    }
-    return json.dumps(data, ensure_ascii=False, indent=1)
-
-
-def _import_session(data: dict):
-    basic = data.get("basic", {})
-    st.session_state["in_company"] = basic.get("company", "")
-    st.session_state["in_role"] = basic.get("role", "")
-    st.session_state["in_posting"] = basic.get("posting", "")
-    for k, v in data.get("interview", {}).items():
-        st.session_state[f"iv_{k}"] = v
-    for k, v in data.get("spec", {}).items():
-        st.session_state[f"sp_{k}"] = v
-    st.session_state.questions = []
-    st.session_state.q_seq = 0
-    for q in data.get("questions", []):
-        qid = _new_question(q.get("text", ""), q.get("limit", 700), q.get("is_freeform", False))
-        st.session_state[f"q_mode_{qid}"] = "공백 포함" if q.get("count_mode", "incl") == "incl" else "공백 제외"
-        st.session_state[f"q_hint_{qid}"] = q.get("hint", "")
-        st.session_state[f"q_research_{qid}"] = q.get("use_research", True)
-    st.session_state.answers = {int(k): v for k, v in data.get("answers", {}).items()}
-    st.session_state.research_md = data.get("research_md", "")
-    st.session_state.fit = data.get("fit", None)
-
+EXP_FIELDS = [
+    ("situation", "상황 — 언제, 어디서, 무슨 역할이었나요?",
+     "예: JW메리어트 호텔 멤버십 세일즈 담당, 2021~2023"),
+    ("problem", "문제와 원인 — 무엇이 잘못되고 있었고, 진짜 원인은 무엇이었나요?",
+     "예: 멤버십 가입률 매년 급감. 분석해 보니 선택지가 하나뿐이고 혜택이 약했음"),
+    ("action", "해결 행동 — '내가' 한 행동을 순서대로 2~4개",
+     "예: ① 고객 데이터로 이용 유형 3개 분류 ② 유형별 맞춤 멤버십 기획 ③ 총지배인 앞 PT"),
+    ("result", "결과 — 가능하면 숫자로 (%, 금액, 건수, 수상, 채택)",
+     "예: 월 매출 3,500만 원 → 8,000만 원. 최우수 직원 선정"),
+    ("apply", "입사 후 활용 — 이 경험을 입사 후 어떻게 써먹을 수 있나요?",
+     "예: 신규 멤버십을 주기적으로 제안해 영업 매출 극대화"),
+]
 
 SPEC_FIELDS = {
     "edu": "최종 학력·학교·전공",
@@ -134,6 +72,93 @@ SPEC_FIELDS = {
 }
 
 
+def _secret(name: str) -> str:
+    try:
+        return st.secrets.get(name, "") or ""
+    except Exception:
+        return ""
+
+
+def _profile_dict() -> dict:
+    return {k: st.session_state.get(f"iv_{k}", "") for k in PROFILE_KEYS}
+
+
+def _new_question(text: str = "", limit: int = 700, is_freeform: bool = False):
+    st.session_state.q_seq += 1
+    qid = st.session_state.q_seq
+    st.session_state.questions.append({"id": qid, "is_freeform": is_freeform})
+    st.session_state[f"q_text_{qid}"] = text
+    st.session_state[f"q_limit_{qid}"] = limit
+    st.session_state[f"q_mode_{qid}"] = "공백 포함"
+    st.session_state[f"q_hint_{qid}"] = ""
+    st.session_state[f"q_research_{qid}"] = True
+    for f, _, _ in EXP_FIELDS:
+        st.session_state.setdefault(f"q_exp_{qid}_{f}", "")
+    return qid
+
+
+def _collect_question(qid: int) -> dict:
+    return {
+        "id": qid,
+        "text": st.session_state.get(f"q_text_{qid}", "").strip(),
+        "limit": int(st.session_state.get(f"q_limit_{qid}", 700)),
+        "count_mode": "incl" if st.session_state.get(f"q_mode_{qid}", "공백 포함") == "공백 포함" else "excl",
+        "hint": st.session_state.get(f"q_hint_{qid}", ""),
+        "use_research": bool(st.session_state.get(f"q_research_{qid}", True)),
+        "exp": {f: st.session_state.get(f"q_exp_{qid}_{f}", "") for f, _, _ in EXP_FIELDS},
+        "is_freeform": next((q.get("is_freeform", False) for q in st.session_state.questions if q["id"] == qid), False),
+    }
+
+
+def _exp_filled_count(qid: int) -> int:
+    return sum(1 for f, _, _ in EXP_FIELDS if str(st.session_state.get(f"q_exp_{qid}_{f}", "")).strip())
+
+
+def _export_session() -> str:
+    data = {
+        "meta": {"app": "jaso-studio", "version": 2,
+                 "saved": datetime.datetime.now().isoformat(timespec="seconds")},
+        "basic": {
+            "company": st.session_state.get("in_company", ""),
+            "role": st.session_state.get("in_role", ""),
+            "posting": st.session_state.get("in_posting", ""),
+        },
+        "profile": _profile_dict(),
+        "spec": {k: st.session_state.get(f"sp_{k}", "") for k in SPEC_FIELDS},
+        "questions": [_collect_question(q["id"]) for q in st.session_state.questions],
+        "answers": st.session_state.answers,
+        "materials": st.session_state.materials,
+        "research_md": st.session_state.research_md,
+        "fit": st.session_state.fit,
+    }
+    return json.dumps(data, ensure_ascii=False, indent=1)
+
+
+def _import_session(data: dict):
+    basic = data.get("basic", {})
+    st.session_state["in_company"] = basic.get("company", "")
+    st.session_state["in_role"] = basic.get("role", "")
+    st.session_state["in_posting"] = basic.get("posting", "")
+    for k, v in (data.get("profile") or data.get("interview") or {}).items():
+        if k in PROFILE_KEYS:
+            st.session_state[f"iv_{k}"] = v
+    for k, v in data.get("spec", {}).items():
+        st.session_state[f"sp_{k}"] = v
+    st.session_state.questions = []
+    st.session_state.q_seq = 0
+    for q in data.get("questions", []):
+        qid = _new_question(q.get("text", ""), q.get("limit", 700), q.get("is_freeform", False))
+        st.session_state[f"q_mode_{qid}"] = "공백 포함" if q.get("count_mode", "incl") == "incl" else "공백 제외"
+        st.session_state[f"q_hint_{qid}"] = q.get("hint", "")
+        st.session_state[f"q_research_{qid}"] = q.get("use_research", True)
+        for f, val in (q.get("exp") or {}).items():
+            st.session_state[f"q_exp_{qid}_{f}"] = val
+    st.session_state.answers = {int(k): v for k, v in data.get("answers", {}).items()}
+    st.session_state.materials = data.get("materials", [])
+    st.session_state.research_md = data.get("research_md", "")
+    st.session_state.fit = data.get("fit", None)
+
+
 @st.cache_data(show_spinner=False, ttl=86400)
 def load_dart_corps(key: str):
     return engine.dart_load_corp_map(key)
@@ -145,6 +170,10 @@ def _generate_one(qdata: dict, idx: int, quiet: bool = False):
     research = st.session_state.research_md if qdata["use_research"] else ""
     fit_sum = engine.fit_summary_text(st.session_state.fit) if st.session_state.fit else ""
     live = qdata["use_research"] and not st.session_state.research_md and engine.is_company_question(qdata["text"])
+    interview = dict(_profile_dict())
+    for f, v in qdata["exp"].items():
+        interview[f"exp_{f}"] = v
+    mat_text = engine.materials_to_text(st.session_state.materials)
 
     def _run():
         try:
@@ -152,14 +181,15 @@ def _generate_one(qdata: dict, idx: int, quiet: bool = False):
                 engine.get_client(api_key), model,
                 company=company, role=role, question=qdata["text"],
                 limit=qdata["limit"], count_mode=qdata["count_mode"],
-                interview=_interview_dict(), hint=qdata["hint"],
+                interview=interview, hint=qdata["hint"],
                 research_md=research, fit_summary=fit_sum,
-                live_search=live, is_freeform=qdata["is_freeform"])
+                live_search=live, is_freeform=qdata["is_freeform"],
+                materials_text=mat_text)
             st.session_state.answers[qdata["id"]] = {
                 "question": qdata["text"], "answer": result["answer"],
                 "notes": result["notes"], "chars": result["chars"],
                 "limit": qdata["limit"], "count_mode": qdata["count_mode"],
-                "used_search": result["used_search"],
+                "used_search": result["used_search"], "ai": None,
             }
             return True
         except engine.EngineError as e:
@@ -174,14 +204,48 @@ def _generate_one(qdata: dict, idx: int, quiet: bool = False):
         st.rerun()
 
 
+def _run_ai_scan(qid: int):
+    ans = st.session_state.answers.get(qid)
+    if not ans:
+        return
+    with st.spinner("AI 감지 위험을 측정하는 중…"):
+        try:
+            scan = engine.ai_scan(engine.get_client(api_key), model, ans["answer"])
+            ans["ai"] = scan
+            st.session_state.answers[qid] = ans
+            st.rerun()
+        except engine.EngineError as e:
+            st.error(str(e))
+
+
+def _run_humanize(qid: int):
+    ans = st.session_state.answers.get(qid)
+    if not ans:
+        return
+    flags = (ans.get("ai") or {}).get("flags", [])
+    with st.spinner("AI 티를 지우고 사람의 문장으로 다시 쓰는 중… (재검사 포함)"):
+        try:
+            client = engine.get_client(api_key)
+            r = engine.humanize_answer(
+                client, model, question=ans["question"], prev_answer=ans["answer"],
+                limit=ans["limit"], count_mode=ans["count_mode"], flags=flags)
+            ans.update(answer=r["answer"], chars=r["chars"],
+                       notes=r["notes"] or ans.get("notes", ""))
+            ans["ai"] = engine.ai_scan(client, model, r["answer"])
+            st.session_state.answers[qid] = ans
+            st.rerun()
+        except engine.EngineError as e:
+            st.error(str(e))
+
+
 # ──────────────────────────────────────────────
 # 사이드바
 # ──────────────────────────────────────────────
 with st.sidebar:
     st.markdown(
         '<div style="font-family:\'Noto Serif KR\',serif;font-size:1.25rem;font-weight:900;'
-        'color:#F5F1E4;letter-spacing:.06em;margin-bottom:.1rem;">✒️ 자소서 스튜디오</div>'
-        '<div style="font-size:.72rem;color:#B08D57;letter-spacing:.3em;margin-bottom:1rem;">JASO STUDIO</div>',
+        'color:#F2EDE0;letter-spacing:.06em;margin-bottom:.1rem;">✒️ 자소서 스튜디오</div>'
+        '<div style="font-size:.72rem;color:#C9A96A;letter-spacing:.3em;margin-bottom:1rem;">JASO STUDIO</div>',
         unsafe_allow_html=True)
 
     st.markdown("##### 연결 설정")
@@ -219,8 +283,8 @@ with st.sidebar:
         st.markdown(
             "1. **기업 분석** — 회사·직무 입력 후 실시간 분석\n"
             "2. **적합도 진단** — 스펙 입력, 합격 가능성 판별\n"
-            "3. **재료 인터뷰** — 질문에 답하며 경험 정리\n"
-            "4. **자소서 생성** — 문항 입력, 분량 선택, 생성\n"
+            "3. **소재 발굴** — 프로필 입력, AI가 소재 추천\n"
+            "4. **자소서 생성** — 문항마다 경험 입력 후 생성,\n   AI 감지 검사·휴먼라이징\n"
             "5. **완성본** — 검토 후 DOCX/TXT 다운로드")
 
 # ──────────────────────────────────────────────
@@ -230,7 +294,7 @@ st.markdown(styles.hero_html(), unsafe_allow_html=True)
 st.markdown(styles.steps_html(), unsafe_allow_html=True)
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["①  기업 분석", "②  직무 적합도 진단", "③  재료 인터뷰", "④  자소서 생성", "⑤  완성본·다운로드"])
+    ["①  기업 분석", "②  직무 적합도 진단", "③  소재 발굴", "④  자소서 생성", "⑤  완성본·다운로드"])
 
 
 def _require_key() -> bool:
@@ -263,7 +327,6 @@ with tab1:
             st.warning("기업명을 입력해 주세요.")
         elif _require_key():
             dart_text = ""
-            snap = None
             if dart_key.strip():
                 with st.spinner("DART 전자공시에서 기업 정보를 가져오는 중…"):
                     try:
@@ -389,72 +452,76 @@ with tab2:
 
 
 # ══════════════════════════════════════════════
-# ③ 재료 인터뷰
+# ③ 소재 발굴
 # ══════════════════════════════════════════════
 with tab3:
-    st.markdown(styles.overline("03", "답변 재료 인터뷰", "질문에 답하면 자소서에 반영됩니다"), unsafe_allow_html=True)
-    answered = sum(1 for k in IV_KEYS if str(st.session_state.get(f"iv_{k}", "")).strip())
-    st.caption(f"완벽한 문장이 아니어도 됩니다. 메모하듯 사실만 적어 주세요. — 현재 {answered}/{len(IV_KEYS)}개 답변됨")
+    st.markdown(styles.overline("03", "소재 발굴", "묻혀 있던 경험을 캐냅니다"), unsafe_allow_html=True)
+    answered = sum(1 for k in PROFILE_KEYS if str(st.session_state.get(f"iv_{k}", "")).strip())
+    st.caption(f"완벽한 문장이 아니어도 됩니다. 메모하듯 적으면 AI가 자소서 소재로 바꿔 드립니다. — 현재 {answered}/{len(PROFILE_KEYS)}개 입력됨")
 
     with st.container(border=True):
-        st.markdown("**STEP 1 · 대표 경험 하나를 깊게** — 자소서의 승부는 경험 하나를 얼마나 깊게 쓰느냐로 갈립니다.")
-        st.text_area("1-1. 언제, 어디서, 무슨 역할이었나요?",
-                     key="iv_exp1_situation", height=76,
-                     placeholder="예: JW메리어트 호텔 멤버십 세일즈 담당, 2021~2023")
-        st.text_area("1-2. 무엇이 잘못되고 있었나요? 그대로 두면 어떻게 됐나요?",
-                     key="iv_exp1_problem", height=76,
-                     placeholder="예: 멤버십 가입률이 매년 급감. 홍보를 늘려도 판매가 안 됨")
-        st.text_area("1-3. 파고들어 보니 진짜 원인은 무엇이었나요? 어떻게 알아냈나요?",
-                     key="iv_exp1_cause", height=76,
-                     placeholder="예: 기존 상품을 분석해 보니 선택지가 하나뿐이고 혜택이 약했음")
-        st.text_area("1-4. 해결을 위해 '내가' 한 행동을 순서대로 2~4개 적어 주세요.",
-                     key="iv_exp1_action", height=96,
-                     placeholder="예: ① 고객 데이터로 이용 유형 3개 분류 ② 유형별 맞춤 멤버십 기획 ③ 총지배인 앞 PT")
-        st.text_area("1-5. 결과는? 가능하면 숫자로. (%, 금액, 건수, 수상, 채택 등)",
-                     key="iv_exp1_result", height=76,
-                     placeholder="예: 월 매출 3,500만 원 → 8,000만 원. 최우수 직원 선정")
-        st.text_area("1-6. 이 경험을 입사 후 어떻게 써먹을 수 있나요?",
-                     key="iv_exp1_apply", height=76,
-                     placeholder="예: 신규 멤버십을 주기적으로 제안해 영업 매출 극대화")
-
-    with st.container(border=True):
-        st.markdown("**STEP 2 · 보조 경험 (선택)** — 문항이 여러 개라면 두 번째 경험이 필요합니다.")
-        st.text_area("2-1. 다른 경험 하나를 자유롭게. (상황→문제→해결→결과 순서로 메모)",
-                     key="iv_exp2_free", height=120)
-
-    with st.container(border=True):
-        st.markdown("**STEP 3 · 나라는 사람**")
+        st.markdown("**STEP 1 · 나라는 사람**")
         c1, c2 = st.columns(2)
         with c1:
-            st.text_area("3-1. 강점 + 그렇게 말할 근거", key="iv_me_strength", height=88)
-            st.text_area("3-2. 약점 + 극복하려는 노력", key="iv_me_weakness", height=88)
+            st.text_area("1-1. 강점 + 그렇게 말할 근거", key="iv_me_strength", height=88)
+            st.text_area("1-2. 약점 + 극복하려는 노력", key="iv_me_weakness", height=88)
         with c2:
-            st.text_area("3-3. 가치관·일하는 원칙 (생긴 계기)", key="iv_me_value", height=88)
-            st.text_area("3-4. 동료·상사가 나를 뭐라고 평가하나요?", key="iv_me_reputation", height=88)
+            st.text_area("1-3. 가치관·일하는 원칙 (생긴 계기)", key="iv_me_value", height=88)
+            st.text_area("1-4. 동료·상사가 나를 뭐라고 평가하나요?", key="iv_me_reputation", height=88)
 
     with st.container(border=True):
-        st.markdown("**STEP 4 · 회사와 나**")
-        st.text_area("4-1. 이 회사에 끌린 '개인적' 계기가 있나요?", key="iv_co_reason", height=76)
+        st.markdown("**STEP 2 · 회사와 나**")
+        st.text_area("2-1. 이 회사에 끌린 '개인적' 계기가 있나요?", key="iv_co_reason", height=76)
         c1, c2 = st.columns(2)
         with c1:
-            st.text_area("4-2. 입사 후 목표 (1년 / 10년)", key="iv_co_goal", height=88)
+            st.text_area("2-2. 입사 후 목표 (1년 / 10년)", key="iv_co_goal", height=88)
         with c2:
-            st.text_area("4-3. 지원 직무 관련 핵심 스펙 요약", key="iv_co_spec", height=88,
+            st.text_area("2-3. 지원 직무 관련 핵심 스펙 요약", key="iv_co_spec", height=88,
                          placeholder="②탭에 입력했다면 비워 두어도 됩니다")
 
     with st.container(border=True):
-        st.markdown("**STEP 5 · 추가 재료 (선택)** — 이력서, 경력기술서, 예전 자소서를 통째로 붙여넣어도 됩니다.")
-        st.text_area("추가 재료", key="iv_extra_free", height=140, label_visibility="collapsed")
+        st.markdown("**STEP 3 · 자유 재료** — 이력서, 경력기술서, 예전 자소서, 대충 쓴 경험 메모까지 전부 붙여넣으세요. 여기서 소재를 캐냅니다.")
+        st.text_area("자유 재료", key="iv_extra_free", height=170, label_visibility="collapsed",
+                     placeholder="붙여넣을수록 발굴되는 소재가 많아집니다")
+
+    mine = st.button("⛏️  AI 소재 발굴 시작", type="primary", use_container_width=True)
+    if mine and _require_key():
+        if answered == 0 and not str(st.session_state.get("iv_extra_free", "")).strip():
+            st.warning("재료를 한 항목 이상 입력해 주세요.")
+        else:
+            with st.spinner("적어 주신 재료에서 자소서 소재를 캐내는 중…"):
+                try:
+                    spec = {SPEC_FIELDS[k]: st.session_state.get(f"sp_{k}", "") for k in SPEC_FIELDS}
+                    st.session_state.materials = engine.mine_materials(
+                        engine.get_client(api_key), model,
+                        st.session_state.get("in_company", ""),
+                        st.session_state.get("in_role", ""),
+                        _profile_dict(), spec,
+                        st.session_state.research_md,
+                        engine.fit_summary_text(st.session_state.fit) if st.session_state.fit else "")
+                except engine.EngineError as e:
+                    st.error(str(e))
+
+    if st.session_state.materials:
+        st.markdown(styles.divider(), unsafe_allow_html=True)
+        st.markdown(styles.overline("—", "발굴된 소재", f"{len(st.session_state.materials)}개 — ④탭에서 문항별 경험 입력에 활용하세요"),
+                    unsafe_allow_html=True)
+        for m in st.session_state.materials:
+            st.markdown(styles.material_card(m), unsafe_allow_html=True)
+    else:
+        st.markdown(styles.empty_state(
+            "아직 발굴된 소재가 없습니다",
+            "위 재료를 채우고 'AI 소재 발굴 시작'을 누르면, 문항 유형별로 쓸 수 있는 경험 소재를 정리해 드립니다."),
+            unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════
 # ④ 자소서 생성
 # ══════════════════════════════════════════════
 with tab4:
-    st.markdown(styles.overline("04", "자소서 생성", "두괄식 · 소제목 · 스토리텔링 자동 적용"), unsafe_allow_html=True)
-    st.caption("실제 공고의 문항을 그대로 붙여넣고, 글자수 제한을 설정하세요. 문항별로 따로 생성할 수 있습니다.")
+    st.markdown(styles.overline("04", "자소서 생성", "문항마다 경험을 넣고, 그 자리에서 생성"), unsafe_allow_html=True)
+    st.caption("실제 공고의 문항을 붙여넣고 → 그 문항에 쓸 경험을 입력한 뒤 → 생성하세요. AI 감지 검사와 휴먼라이징까지 한 화면에서 끝납니다.")
 
-    # 문항 프리셋
     st.markdown("**문항 빠른 추가**")
     pc = st.columns(6)
     presets = [
@@ -480,7 +547,6 @@ with tab4:
             "위 버튼으로 자주 나오는 문항을 넣거나, '빈 문항 직접 추가'로 실제 공고 문항을 붙여넣으세요."),
             unsafe_allow_html=True)
 
-    # 문항 목록
     for idx, q in enumerate(list(st.session_state.questions), 1):
         qid = q["id"]
         with st.container(border=True):
@@ -496,14 +562,24 @@ with tab4:
             st.text_area("문항 (공고 원문 그대로)", key=f"q_text_{qid}", height=72,
                          placeholder="예: 예상치 못한 문제를 해결한 경험을 구체적으로 기술해 주십시오. (1,000자)")
 
+            # ── 이 문항 전용 경험 입력 ──
+            filled = _exp_filled_count(qid)
+            exp_label = f"🧩  이 문항에 쓸 경험 입력 — {filled}/{len(EXP_FIELDS)} 채움" if filled else "🧩  이 문항에 쓸 경험 입력 (비워 두면 발굴된 소재·프로필에서 자동 선택)"
+            with st.expander(exp_label, expanded=(filled == 0 and idx == 1)):
+                if st.session_state.materials:
+                    st.caption("③에서 발굴한 소재: " + " · ".join(
+                        f"[{m.get('title', '')}]" for m in st.session_state.materials[:6]))
+                for f, label, ph in EXP_FIELDS:
+                    st.text_area(label, key=f"q_exp_{qid}_{f}", height=72, placeholder=ph)
+
             oc = st.columns([3, 1.4, 2.6])
             with oc[0]:
                 st.slider("분량 (자)", 300, 5000, key=f"q_limit_{qid}", step=50)
             with oc[1]:
                 st.radio("글자수 기준", ["공백 포함", "공백 제외"], key=f"q_mode_{qid}", horizontal=False)
             with oc[2]:
-                st.text_input("이 문항에 쓸 소재·방향 (선택)", key=f"q_hint_{qid}",
-                              placeholder="예: 대표 경험① 대신 보조 경험②를 써줘")
+                st.text_input("작성 방향 지정 (선택)", key=f"q_hint_{qid}",
+                              placeholder="예: 소제목에 숫자를 꼭 넣어줘")
 
             st.checkbox("이 문항에 기업 분석 자료 반영 (지원동기·포부는 꼭 켜 두세요)",
                         key=f"q_research_{qid}")
@@ -517,17 +593,40 @@ with tab4:
                 else:
                     _generate_one(qdata, idx)
 
-            # 결과 표시
+            # ── 결과 ──
             ans = st.session_state.answers.get(qid)
             if ans:
                 subtitle, body = engine.split_subtitle(ans["answer"])
+                ai = ans.get("ai")
                 st.markdown(styles.answer_card(
                     ans["question"], subtitle, body, ans["chars"],
                     ans["limit"], ans["count_mode"],
-                    extra_meta=("실시간 웹 검색 반영" if ans.get("used_search") else "")),
+                    extra_meta=("실시간 웹 검색 반영" if ans.get("used_search") else ""),
+                    ai_percent=(ai or {}).get("percent")),
                     unsafe_allow_html=True)
                 if ans.get("notes"):
                     st.markdown(styles.note_box("✍ 더 좋아지려면", ans["notes"]), unsafe_allow_html=True)
+
+                # AI 감지
+                bc = st.columns(2)
+                with bc[0]:
+                    if st.button("🕵️  AI 감지 위험 측정", key=f"scan_{qid}", use_container_width=True) and _require_key():
+                        _run_ai_scan(qid)
+                with bc[1]:
+                    if st.button("🧬  AI 티 제거 (휴먼라이징)", key=f"hum_{qid}", use_container_width=True) and _require_key():
+                        _run_humanize(qid)
+
+                if ai:
+                    st.markdown(styles.ai_gauge(ai.get("percent"), ai.get("verdict", ""),
+                                                ai.get("comment", ""),
+                                                heuristic=ai.get("heuristic"), llm=ai.get("llm")),
+                                unsafe_allow_html=True)
+                    if ai.get("flags"):
+                        st.markdown(styles.flag_chips(ai["flags"]), unsafe_allow_html=True)
+                        with st.expander("감지된 패턴 자세히"):
+                            for fl in ai["flags"]:
+                                st.markdown(f"- **{fl.get('pattern', '')}** — \"{fl.get('example', '')}\" → {fl.get('fix', '')}")
+                    st.caption("※ 자체 문체 통계와 AI 판독을 결합한 추정치입니다. 실제 감지기(GPTZero 등)의 결과와 다를 수 있습니다.")
 
                 rc = st.columns([3, 1.2])
                 with rc[0]:
@@ -548,7 +647,7 @@ with tab4:
                                         instruction=instr, limit=ans["limit"],
                                         count_mode=ans["count_mode"])
                                     ans.update(answer=r["answer"], chars=r["chars"],
-                                               notes=r["notes"] or ans.get("notes", ""))
+                                               notes=r["notes"] or ans.get("notes", ""), ai=None)
                                     st.session_state.answers[qid] = ans
                                     st.rerun()
                                 except engine.EngineError as e:
@@ -556,7 +655,6 @@ with tab4:
                 with st.expander("📋 복사용 텍스트"):
                     st.code(ans["answer"], language=None)
 
-    # 전체 생성
     if st.session_state.questions:
         st.markdown(styles.divider(), unsafe_allow_html=True)
         if st.button("⚡  모든 문항 한 번에 생성", use_container_width=True) and _require_key():
@@ -592,11 +690,16 @@ with tab5:
     else:
         total_incl = sum(a["chars"]["incl"] for _, a in done)
         total_excl = sum(a["chars"]["excl"] for _, a in done)
-        st.markdown(styles.stat_tiles([
+        scanned = [a for _, a in done if a.get("ai")]
+        avg_ai = round(sum(a["ai"]["percent"] for a in scanned) / len(scanned)) if scanned else None
+        tiles = [
             ("완성 문항", f"{len(done)}개", f"전체 {len(st.session_state.questions)}개 중"),
             ("총 분량 · 공백 포함", f"{total_incl:,}자", ""),
             ("총 분량 · 공백 제외", f"{total_excl:,}자", ""),
-        ]), unsafe_allow_html=True)
+        ]
+        if avg_ai is not None:
+            tiles.append(("평균 AI 감지 위험", f"{avg_ai}%", "추정치"))
+        st.markdown(styles.stat_tiles(tiles), unsafe_allow_html=True)
 
         items = []
         for qid, a in done:
@@ -607,7 +710,8 @@ with tab5:
                 "limit": a["limit"], "count_mode": a["count_mode"],
             })
             st.markdown(styles.answer_card(a["question"], subtitle, body, a["chars"],
-                                           a["limit"], a["count_mode"]),
+                                           a["limit"], a["count_mode"],
+                                           ai_percent=(a.get("ai") or {}).get("percent")),
                         unsafe_allow_html=True)
 
         company = st.session_state.get("in_company", "")
@@ -626,6 +730,6 @@ with tab5:
                                use_container_width=True)
 
 st.markdown(
-    '<div style="text-align:center;color:#A39B85;font-size:.75rem;margin-top:3rem;'
+    '<div style="text-align:center;color:#7C869C;font-size:.75rem;margin-top:3rem;'
     'letter-spacing:.14em;">JASO STUDIO — 합격을 설계하는 자기소개서</div>',
     unsafe_allow_html=True)

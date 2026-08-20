@@ -173,7 +173,8 @@ def _max_tokens_for(limit: int) -> int:
 def generate_answer(client, model: str, *, company: str, role: str, question: str,
                     limit: int, count_mode: str, interview: dict, hint: str = "",
                     research_md: str = "", fit_summary: str = "",
-                    live_search: bool = False, is_freeform: bool = False):
+                    live_search: bool = False, is_freeform: bool = False,
+                    materials_text: str = ""):
     """
     반환 dict: answer, notes, used_search, chars(incl/excl), attempts
     live_search: 리서치 자료가 없을 때 생성 단계에서 직접 웹 검색을 수행할지
@@ -181,7 +182,8 @@ def generate_answer(client, model: str, *, company: str, role: str, question: st
     user = prompts.build_answer_prompt(
         company=company, role=role, question=question, limit=limit,
         count_mode=count_mode, interview=interview, hint=hint,
-        research_md=research_md, fit_summary=fit_summary, is_freeform=is_freeform)
+        research_md=research_md, fit_summary=fit_summary, is_freeform=is_freeform,
+        materials_text=materials_text)
     if live_search and not research_md:
         user += ("\n\n추가 지시: 회사 리서치 자료가 없으므로, 웹 검색으로 "
                  f"'{company}'의 최신 사실(실적·신사업·전략) 2~3개를 확인해 지원동기 근거로 인용하라. "
@@ -306,6 +308,122 @@ def fit_summary_text(fit: dict) -> str:
     for g in fit.get("gaps", [])[:3]:
         lines.append(f"보완: {g.get('title', '')} → {g.get('fix', '')}")
     return "\n".join(lines)
+
+
+# ──────────────────────────────────────────────
+# AI 소재 발굴
+# ──────────────────────────────────────────────
+
+def mine_materials(client, model: str, company: str, role: str, profile: dict,
+                   spec: dict, research_md: str = "", fit_summary: str = ""):
+    user = prompts.build_mine_prompt(company, role, profile, spec, research_md, fit_summary)
+    text, _ = call_claude(client, model, prompts.MINE_SYSTEM,
+                          [{"role": "user", "content": user}],
+                          max_tokens=3500, temperature=0.4)
+    data = _parse_json_loose(text)
+    return data.get("materials", [])
+
+
+def materials_to_text(materials: list) -> str:
+    """생성 프롬프트 주입용."""
+    if not materials:
+        return ""
+    lines = []
+    for m in materials:
+        best = "·".join(m.get("best_for", []))
+        lines.append(f"- [{m.get('title','')}] {m.get('summary','')} "
+                     f"(핵심 숫자: {m.get('number_hook','')} / 적합 문항: {best})")
+    return "\n".join(lines)
+
+
+# ──────────────────────────────────────────────
+# AI 감지 위험 진단 · 휴먼라이징
+# ──────────────────────────────────────────────
+
+_AI_CLICHES = ["이를 통해", "뿐만 아니라", "나아가", "라고 할 수 있습니다",
+               "확인할 수 있었습니다", "다양한 노력", "적극적으로", "기반으로 한",
+               "긍정적인 영향을 미칠 것입니다", "라고 생각합니다"]
+
+
+def _stylometrics(text: str) -> dict:
+    """로컬 문체 통계 → AI스러움 휴리스틱 점수(0~100)."""
+    body = re.sub(r"^\[[^\[\]]{2,40}\]\s*", "", text.strip())  # 소제목 제외
+    sents = [s.strip() for s in re.split(r"(?<=다\.)\s+|(?<=[.!?])\s+", body) if len(s.strip()) >= 4]
+    if len(sents) < 3:
+        return {"score": 50, "sent_cv": 0, "ending_ratio": 0, "cliche_per_k": 0, "n_sents": len(sents)}
+
+    lens = [len(s) for s in sents]
+    mean = sum(lens) / len(lens)
+    var = sum((x - mean) ** 2 for x in lens) / len(lens)
+    cv = (var ** 0.5) / mean if mean else 0  # 길이 변동계수: 낮을수록 기계적
+
+    endings = {}
+    for s in sents:
+        e = s[-6:]
+        e = re.sub(r"[^가-힣]", "", e)[-4:]
+        endings[e] = endings.get(e, 0) + 1
+    ending_ratio = max(endings.values()) / len(sents)  # 같은 종결 반복 비율
+
+    n_chars = max(1, len(body))
+    cliche_count = sum(body.count(c) for c in _AI_CLICHES)
+    cliche_per_k = cliche_count * 1000 / n_chars
+
+    # 점수 결합
+    score = 0.0
+    score += max(0.0, (0.55 - min(cv, 0.55))) / 0.55 * 40      # 균일한 문장 길이 (최대 40)
+    score += max(0.0, ending_ratio - 0.55) / 0.45 * 25          # 종결 단조로움 (최대 25)
+    score += min(cliche_per_k / 6.0, 1.0) * 35                  # 상투 표현 밀도 (최대 35)
+    return {"score": round(min(100, score)), "sent_cv": round(cv, 2),
+            "ending_ratio": round(ending_ratio, 2),
+            "cliche_per_k": round(cliche_per_k, 1), "n_sents": len(sents)}
+
+
+def ai_scan(client, model: str, text: str) -> dict:
+    """AI 감지 위험(추정 %) = 로컬 휴리스틱 50% + Claude 포렌식 평가 50%."""
+    heur = _stylometrics(text)
+    raw, _ = call_claude(client, model, prompts.AISCAN_SYSTEM,
+                         [{"role": "user", "content": prompts.build_aiscan_prompt(text)}],
+                         max_tokens=2000, temperature=0.1)
+    data = _parse_json_loose(raw)
+    llm_p = int(data.get("probability", 50))
+    percent = round(0.5 * heur["score"] + 0.5 * llm_p)
+    if percent <= 30:
+        verdict = "안전"
+    elif percent <= 60:
+        verdict = "주의"
+    else:
+        verdict = "위험"
+    return {"percent": percent, "verdict": verdict,
+            "llm": llm_p, "heuristic": heur["score"], "detail": heur,
+            "flags": data.get("flags", []), "comment": data.get("comment", "")}
+
+
+def humanize_answer(client, model: str, *, question: str, prev_answer: str,
+                    limit: int, count_mode: str, flags: list):
+    """AI 티 제거 재작성. 분량 유지 보정 포함."""
+    system = _system_for_writing()
+    user = prompts.build_humanize_prompt(question, prev_answer, limit, count_mode, flags)
+    messages = [{"role": "user", "content": user}]
+    raw, _ = call_claude(client, model, system, messages,
+                         max_tokens=_max_tokens_for(limit), temperature=0.9)
+    answer, notes = split_answer(raw)
+
+    lo, hi = int(limit * 0.92), limit
+    for _ in range(1):
+        n = count_chars(answer, count_mode)
+        if lo <= n <= hi:
+            break
+        messages = messages + [
+            {"role": "assistant", "content": raw},
+            {"role": "user", "content": prompts.build_length_fix_prompt(n, lo, hi, count_mode)},
+        ]
+        raw, _ = call_claude(client, model, system, messages,
+                             max_tokens=_max_tokens_for(limit), temperature=0.9)
+        new_answer, new_notes = split_answer(raw)
+        if new_answer:
+            answer, notes = new_answer, (new_notes or notes)
+
+    return {"answer": answer, "notes": notes, "chars": char_report(answer)}
 
 
 # ──────────────────────────────────────────────

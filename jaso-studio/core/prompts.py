@@ -47,6 +47,10 @@ STYLE_CONSTITUTION = """당신은 대한민국 최상위 자기소개서 첨삭 
 - 접속부사(그리고, 그래서, 하지만)는 최소화한다. 문장은 내용의 인과로 이어붙인다.
 - 종결어미는 "-습니다/-입니다"로 통일. 감탄사·물결표·이모지·괄호 부연 금지.
 - 같은 단어를 한 문단 안에서 반복하지 않는다. 어색한 단어 결합(비문)을 만들지 않는다.
+- 문장 길이를 다양하게 섞는다. 12자 이하 초단문과 40자대 문장이 공존해야 한다.
+  기계가 쓴 듯 모든 문장이 비슷한 길이로 늘어지면 실패다.
+- AI 상투 표현 금지: "이를 통해", "뿐만 아니라", "나아가", "~라고 할 수 있습니다",
+  "~하는 것을 확인할 수 있었습니다", "다양한 노력을 통해", 세 개짜리 병렬 나열의 남발.
 
 ━━━ 제5조. 금지 사항 ━━━
 - 클리셰 금지: "어릴 적부터", "귀사", "글로벌 인재", "밑거름", "일취월장",
@@ -195,15 +199,13 @@ def build_fit_prompt(company: str, role: str, spec: dict, research_md: str, post
 
 
 def build_interview_block(interview: dict) -> str:
-    """인터뷰 답변(dict)을 프롬프트 블록으로 변환. 빈 항목은 제외."""
+    """소재(dict)를 프롬프트 블록으로 변환. 빈 항목은 제외."""
     labels = {
-        "exp1_situation": "대표 경험① 상황(언제·어디서·역할)",
-        "exp1_problem": "대표 경험① 문제 상황",
-        "exp1_cause": "대표 경험① 원인 분석",
-        "exp1_action": "대표 경험① 해결 행동",
-        "exp1_result": "대표 경험① 결과(숫자·사실)",
-        "exp1_apply": "대표 경험① 입사 후 활용 방안",
-        "exp2_free": "보조 경험② (자유 서술)",
+        "exp_situation": "★ 이 문항 전용 경험 — 상황(언제·어디서·역할)",
+        "exp_problem": "★ 이 문항 전용 경험 — 문제와 원인",
+        "exp_action": "★ 이 문항 전용 경험 — 해결 행동(순서대로)",
+        "exp_result": "★ 이 문항 전용 경험 — 결과(숫자·사실)",
+        "exp_apply": "★ 이 문항 전용 경험 — 입사 후 활용",
         "me_strength": "강점과 근거",
         "me_weakness": "약점과 극복 노력",
         "me_value": "가치관·일하는 원칙",
@@ -218,12 +220,12 @@ def build_interview_block(interview: dict) -> str:
         val = str(interview.get(key, "")).strip()
         if val:
             lines.append(f"◆ {label}\n{val}")
-    return "\n\n".join(lines) if lines else "(인터뷰 답변 없음 — 아래 다른 재료만 사용)"
+    return "\n\n".join(lines) if lines else "(입력된 소재 없음 — 아래 다른 재료만 사용)"
 
 
 def build_answer_prompt(company: str, role: str, question: str, limit: int, count_mode: str,
                         interview: dict, hint: str, research_md: str, fit_summary: str,
-                        is_freeform: bool = False) -> str:
+                        is_freeform: bool = False, materials_text: str = "") -> str:
     lo = int(limit * 0.92)
     mode_txt = "공백 포함" if count_mode == "incl" else "공백 제외"
     blocks = [
@@ -231,8 +233,10 @@ def build_answer_prompt(company: str, role: str, question: str, limit: int, coun
         f"[지원 직무] {role or '미정'}",
         f"[문항] {question}",
         f"[목표 분량] {mode_txt} {lo}~{limit}자 (초과 절대 금지)",
-        f"\n[지원자 인터뷰 데이터]\n{build_interview_block(interview)}",
+        f"\n[지원자 소재 데이터]\n{build_interview_block(interview)}",
     ]
+    if materials_text.strip():
+        blocks.append(f"\n[AI가 발굴한 소재 목록 — 전용 경험이 비어 있을 때 참고]\n{materials_text[:2000]}")
     if hint.strip():
         blocks.append(f"\n[이 문항에 쓸 소재·방향 (지원자 지정 — 최우선 반영)]\n{hint.strip()}")
     if research_md:
@@ -244,10 +248,105 @@ def build_answer_prompt(company: str, role: str, question: str, limit: int, coun
     blocks.append("""
 지시:
 1) 문체 헌법을 지켜 이 문항의 답변을 작성하라.
-2) 인터뷰 데이터 중 이 문항에 가장 적합한 재료를 골라 써라. 문항과 무관한 재료는 버려라.
+2) '★ 이 문항 전용 경험'이 있으면 반드시 그 경험을 중심으로 쓴다. 다른 소재로 대체하지 마라.
+   전용 경험이 없을 때만 다른 재료에서 이 문항에 가장 적합한 것을 고른다.
 3) 소제목은 맨 앞 1개. 두괄식. 경험은 상황→문제제기→원인→해결책→결과→입사 후 활용 순서.
 4) 출력 형식(===ANSWER=== / ===NOTES===)을 지켜라.""")
     return "\n".join(blocks)
+
+
+# ──────────────────────────────────────────────
+# AI 소재 발굴
+# ──────────────────────────────────────────────
+
+MINE_SYSTEM = """당신은 자기소개서 소재 발굴 전문 컨설턴트다.
+지원자가 흘리듯 적어둔 이력·메모에서 '자소서에 쓸 수 있는 경험 소재'를 캐낸다.
+- 소재는 반드시 지원자가 실제로 언급한 사실에서만 꺼낸다. 없는 경험을 만들지 않는다.
+- 각 소재는 어떤 문항 유형에 쓰면 좋은지까지 연결한다.
+- 반드시 유효한 JSON 하나만 출력한다. 코드펜스·부연 설명 금지."""
+
+
+def build_mine_prompt(company: str, role: str, profile: dict, spec: dict,
+                      research_md: str, fit_summary: str) -> str:
+    profile_block = build_interview_block(profile)
+    spec_lines = "\n".join(f"- {k}: {v}" for k, v in (spec or {}).items() if str(v).strip())
+    ctx = ""
+    if research_md:
+        ctx += f"\n[기업 리서치 요약]\n{research_md[:1500]}\n"
+    if fit_summary:
+        ctx += f"\n[적합도 진단 요약]\n{fit_summary[:800]}\n"
+    return f"""[지원 기업] {company or '미정'} / [지원 직무] {role or '미정'}
+[지원자가 적어둔 재료]
+{profile_block}
+[스펙]
+{spec_lines or '(없음)'}
+{ctx}
+위 재료에서 자기소개서 소재를 4~7개 발굴하라. 숫자가 붙은 경험을 우선하라.
+아래 JSON 스키마로만 출력:
+{{
+  "materials": [
+    {{
+      "title": "소재 이름 (짧고 구체적으로)",
+      "summary": "상황→문제→해결→결과 한 줄 요약",
+      "number_hook": "이 소재의 핵심 숫자나 검증 가능한 사실 (없으면 '수치 보완 필요')",
+      "best_for": ["어울리는 문항 유형 1~3개 (예: 지원동기, 직무 역량, 갈등 해결, 문제 해결, 성장과정, 입사 후 포부)"],
+      "tip": "이 소재를 쓸 때 강조할 포인트 한 줄"
+    }}
+  ]
+}}"""
+
+
+# ──────────────────────────────────────────────
+# AI 감지 위험 진단 · 휴먼라이징
+# ──────────────────────────────────────────────
+
+AISCAN_SYSTEM = """당신은 기업 채용팀이 쓰는 AI 작성 감지기(GPTZero류)의 원리를 잘 아는 텍스트 포렌식 전문가다.
+한국어 자기소개서가 'AI 작성'으로 분류될 위험을 냉정하게 평가한다.
+평가 기준: 문장 길이의 균일함, 상투적 연결어(이를 통해·뿐만 아니라·나아가 등), 3항 병렬의 남발,
+구체성 없는 매끈한 서술, 어휘 다양성 부족, 지나치게 완결적인 문단 구조, 개성 없는 표현.
+반드시 유효한 JSON 하나만 출력한다. 코드펜스 금지."""
+
+
+def build_aiscan_prompt(text: str) -> str:
+    return f"""다음 자기소개서 답변의 AI 감지 위험을 평가하라.
+---
+{text}
+---
+아래 JSON 스키마로만 출력:
+{{
+  "probability": 0에서 100 사이 정수 (AI 작성으로 감지될 추정 확률),
+  "flags": [
+    {{"pattern": "감지 위험 패턴", "example": "본문 속 실제 예시 구절", "fix": "고치는 방향"}}
+  ],
+  "comment": "총평 한 줄"
+}}
+flags는 위험한 순서로 최대 5개."""
+
+
+def build_humanize_prompt(question: str, prev_answer: str, limit: int, count_mode: str,
+                          flags: list) -> str:
+    lo = int(limit * 0.92)
+    mode_txt = "공백 포함" if count_mode == "incl" else "공백 제외"
+    flag_lines = "\n".join(
+        f"- {f.get('pattern','')}: \"{f.get('example','')}\" → {f.get('fix','')}"
+        for f in (flags or [])[:5]) or "- (감지된 패턴 없음 — 전반적인 리듬만 사람답게)"
+    return f"""아래 답변이 AI 작성으로 감지될 위험이 있다. 사람이 쓴 글로 읽히도록 고쳐 써라.
+
+[문항] {question}
+[기존 답변]
+{prev_answer}
+
+[감지된 위험 패턴 — 반드시 해소할 것]
+{flag_lines}
+
+고쳐 쓰기 규칙:
+1) 사실·숫자·경험 내용은 단 하나도 바꾸지 않는다. 새 사실을 추가하지 않는다.
+2) 소제목 1개, 두괄식, 상황→문제제기→원인→해결책→결과→입사 후 활용 구조는 유지한다.
+3) 문장 길이를 불규칙하게 섞는다. 10자짜리 단문을 곳곳에 심는다. 결정적 대목은 명사로 끊는다.
+4) 상투 연결어를 지우고 내용의 인과로 잇는다. 3항 병렬은 한 번만 허용한다.
+5) 현장감 있는 구체 묘사나 짧은 대사를 한 곳에 넣는다. 단, 지어내지 말고 기존 내용을 장면화한다.
+6) 분량은 {mode_txt} {lo}~{limit}자 유지. 종결어미는 -습니다/-입니다 유지.
+출력 형식(===ANSWER=== / ===NOTES===)을 지켜라. NOTES에는 무엇을 바꿨는지 1~2줄."""
 
 
 def build_length_fix_prompt(current: int, lo: int, hi: int, count_mode: str) -> str:
