@@ -25,6 +25,10 @@ MODEL_CHOICES = {
 }
 DEFAULT_MODEL = "claude-sonnet-5"
 
+# DART 전자공시 기본 인증키 (무료 · 운영자 내장 키)
+# 교체하려면 Streamlit secrets에 DART_API_KEY를 넣으면 이 값 대신 사용된다.
+DEFAULT_DART_KEY = "062436e4daf9f2a203dec2bf5f74a5e4990f6a94"
+
 WEB_SEARCH_TOOL_TYPE = "web_search_20250305"
 
 
@@ -314,14 +318,24 @@ def fit_summary_text(fit: dict) -> str:
 # AI 소재 발굴
 # ──────────────────────────────────────────────
 
-def mine_materials(client, model: str, company: str, role: str, profile: dict,
+def mine_materials(client, model: str, company: str, role: str, docs_text: str,
                    spec: dict, research_md: str = "", fit_summary: str = ""):
-    user = prompts.build_mine_prompt(company, role, profile, spec, research_md, fit_summary)
+    user = prompts.build_mine_prompt(company, role, docs_text, spec, research_md, fit_summary)
     text, _ = call_claude(client, model, prompts.MINE_SYSTEM,
                           [{"role": "user", "content": user}],
-                          max_tokens=3500, temperature=0.4)
+                          max_tokens=5000, temperature=0.4)
     data = _parse_json_loose(text)
     return data.get("materials", [])
+
+
+def memory_questions(client, model: str, company: str, role: str, spec: dict):
+    """소재가 안 떠오르는 사용자를 위한 기억 자극 질문 생성."""
+    user = prompts.build_helper_prompt(company, role, spec)
+    text, _ = call_claude(client, model, prompts.HELPER_SYSTEM,
+                          [{"role": "user", "content": user}],
+                          max_tokens=3000, temperature=0.6)
+    data = _parse_json_loose(text)
+    return data.get("groups", [])
 
 
 def materials_to_text(materials: list) -> str:

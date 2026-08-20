@@ -62,6 +62,7 @@ _DEFAULTS = {
     "q_seq": 0,
     "answers": {},            # id -> {question, answer, notes, chars, limit, count_mode, used_search, ai, sim}
     "materials": [],          # AI 발굴 소재
+    "helper_qs": [],          # 기억 자극 질문 (소재 발굴 도우미)
     "uploaded_docs": [],      # [{name, text, chars, warn}]
     "doc_sigs": [],
     "research_md": "",
@@ -74,12 +75,6 @@ for k, v in _DEFAULTS.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# 공통 프로필(소재 발굴 탭) 키 — 경험은 문항마다 따로 입력
-PROFILE_KEYS = [
-    "me_strength", "me_weakness", "me_value", "me_reputation",
-    "co_reason", "co_goal", "co_spec",
-    "extra_free",
-]
 EXP_FIELDS = [
     ("situation", "상황 — 언제, 어디서, 무슨 역할이었나요?",
      "예: JW메리어트 호텔 멤버십 세일즈 담당, 2021~2023"),
@@ -111,10 +106,6 @@ def _secret(name: str) -> str:
         return st.secrets.get(name, "") or ""
     except Exception:
         return ""
-
-
-def _profile_dict() -> dict:
-    return {k: st.session_state.get(f"iv_{k}", "") for k in PROFILE_KEYS}
 
 
 def _docs_text(cap: int = 12000) -> str:
@@ -165,7 +156,6 @@ def _export_session() -> str:
             "role": st.session_state.get("in_role", ""),
             "posting": st.session_state.get("in_posting", ""),
         },
-        "profile": _profile_dict(),
         "spec": {k: st.session_state.get(f"sp_{k}", "") for k in SPEC_FIELDS},
         "questions": [_collect_question(q["id"]) for q in st.session_state.questions],
         "answers": st.session_state.answers,
@@ -182,9 +172,6 @@ def _import_session(data: dict):
     st.session_state["in_company"] = basic.get("company", "")
     st.session_state["in_role"] = basic.get("role", "")
     st.session_state["in_posting"] = basic.get("posting", "")
-    for k, v in (data.get("profile") or data.get("interview") or {}).items():
-        if k in PROFILE_KEYS:
-            st.session_state[f"iv_{k}"] = v
     for k, v in data.get("spec", {}).items():
         st.session_state[f"sp_{k}"] = v
     st.session_state.questions = []
@@ -214,9 +201,7 @@ def _generate_one(qdata: dict, idx: int, quiet: bool = False):
     research = st.session_state.research_md if qdata["use_research"] else ""
     fit_sum = engine.fit_summary_text(st.session_state.fit) if st.session_state.fit else ""
     live = qdata["use_research"] and not st.session_state.research_md and engine.is_company_question(qdata["text"])
-    interview = dict(_profile_dict())
-    for f, v in qdata["exp"].items():
-        interview[f"exp_{f}"] = v
+    interview = {f"exp_{f}": v for f, v in qdata["exp"].items()}
     interview["uploaded_docs"] = _docs_text()
     mat_text = engine.materials_to_text(st.session_state.materials)
 
@@ -247,6 +232,23 @@ def _generate_one(qdata: dict, idx: int, quiet: bool = False):
         ok = _run()
     if ok:
         st.rerun()
+
+
+def _fill_exp_from_material(qid: int):
+    """④에서 발굴된 소재 선택 시 경험 5칸을 초안으로 자동 채움."""
+    sel = st.session_state.get(f"q_mat_{qid}")
+    if not sel or sel == "직접 입력":
+        return
+    for m in st.session_state.materials:
+        if m.get("title") == sel:
+            draft = m.get("draft") or {}
+            for f, _, _ in EXP_FIELDS:
+                val = str(draft.get(f, "")).strip()
+                if val:
+                    st.session_state[f"q_exp_{qid}_{f}"] = val
+            if not draft and m.get("summary"):
+                st.session_state[f"q_exp_{qid}_situation"] = m["summary"]
+            break
 
 
 def _run_ai_scan(qid: int):
@@ -343,21 +345,9 @@ with st.sidebar:
     else:
         model = engine.MODEL_CHOICES[model_label]
 
-    dart_key = st.text_input("DART 전자공시 API 키 (선택)", type="password",
-                             value=_secret("DART_API_KEY"),
-                             help="상장사 재무제표·공시를 함께 분석합니다")
-    st.markdown('<div style="font-size:.78rem;margin:-.4rem 0 .2rem;">'
-                '<a href="https://opendart.fss.or.kr" target="_blank" '
-                'style="color:#C9A96A;text-decoration:none;">→ DART 인증키 무료 발급 바로가기</a></div>',
-                unsafe_allow_html=True)
-    with st.expander("DART 키 발급 방법 (약 1분)"):
-        st.markdown(
-            "1. [opendart.fss.or.kr](https://opendart.fss.or.kr) 접속\n"
-            "2. 우측 상단 **회원가입** (이메일 인증)\n"
-            "3. 로그인 후 상단 메뉴 **인증키 신청/관리 → 인증키 신청**\n"
-            "4. 사용 목적에 '기업 정보 조회' 정도로 적고 신청\n"
-            "5. **인증키 관리** 화면에 나온 40자리 키를 복사해 위 칸에 붙여넣기\n\n"
-            "무료이고, 신청 즉시 발급됩니다.")
+    # DART 전자공시 키는 기본 내장 (secrets의 DART_API_KEY로 교체 가능)
+    dart_key = _secret("DART_API_KEY") or engine.DEFAULT_DART_KEY
+    st.caption("📊 DART 전자공시 연동: 기본 탑재 (상장사 재무·공시 자동 분석)")
 
     st.markdown("---")
     st.markdown("##### 작업 저장 / 불러오기")
@@ -380,8 +370,8 @@ with st.sidebar:
         st.markdown(
             "1. **기업 분석** — 회사·직무 입력 후 실시간 분석\n"
             "2. **적합도 진단** — 스펙 입력, 합격 가능성 판별\n"
-            "3. **소재 발굴** — 프로필 입력, AI가 소재 추천\n"
-            "4. **자소서 생성** — 문항마다 경험 입력 후 생성,\n   AI 감지 검사·휴먼라이징\n"
+            "3. **소재 발굴** — 이력서 파일만 올리면 AI가 소재 발굴\n"
+            "4. **자소서 생성** — 문항마다 소재 불러오기/경험 입력 후 생성,\n   AI 감지·유사도 검사\n"
             "5. **완성본** — 검토 후 DOCX/TXT 다운로드")
 
 # ──────────────────────────────────────────────
@@ -570,32 +560,11 @@ if _step == 2:
 # ③ 소재 발굴
 # ══════════════════════════════════════════════
 if _step == 3:
-    st.markdown(styles.overline("03", "소재 발굴", "묻혀 있던 경험을 캐냅니다"), unsafe_allow_html=True)
-    answered = sum(1 for k in PROFILE_KEYS if str(st.session_state.get(f"iv_{k}", "")).strip())
-    st.caption(f"완벽한 문장이 아니어도 됩니다. 메모하듯 적으면 AI가 자소서 소재로 바꿔 드립니다. — 현재 {answered}/{len(PROFILE_KEYS)}개 입력됨")
+    st.markdown(styles.overline("03", "소재 발굴", "파일만 올리면 AI가 캐냅니다"), unsafe_allow_html=True)
+    st.caption("여기서는 타이핑할 필요 없습니다. 파일을 올리고 발굴 버튼만 누르세요. 경험 입력은 ④단계에서 문항마다 한 번만 합니다.")
 
     with st.container(border=True):
-        st.markdown("**STEP 1 · 나라는 사람**")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.text_area("1-1. 강점 + 그렇게 말할 근거", key="iv_me_strength", height=88)
-            st.text_area("1-2. 약점 + 극복하려는 노력", key="iv_me_weakness", height=88)
-        with c2:
-            st.text_area("1-3. 가치관·일하는 원칙 (생긴 계기)", key="iv_me_value", height=88)
-            st.text_area("1-4. 동료·상사가 나를 뭐라고 평가하나요?", key="iv_me_reputation", height=88)
-
-    with st.container(border=True):
-        st.markdown("**STEP 2 · 회사와 나**")
-        st.text_area("2-1. 이 회사에 끌린 '개인적' 계기가 있나요?", key="iv_co_reason", height=76)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.text_area("2-2. 입사 후 목표 (1년 / 10년)", key="iv_co_goal", height=88)
-        with c2:
-            st.text_area("2-3. 지원 직무 관련 핵심 스펙 요약", key="iv_co_spec", height=88,
-                         placeholder="②탭에 입력했다면 비워 두어도 됩니다")
-
-    with st.container(border=True):
-        st.markdown("**STEP 3 · 파일로 재료 추가** — 이력서·경력기술서·기존 자소서 파일을 올리면 내용을 자동으로 추출해 소재 발굴과 작성에 씁니다.")
+        st.markdown("**STEP 1 · 재료 파일 올리기** — 이력서·경력기술서·기존 자소서 파일을 올리면 내용을 자동으로 추출해 소재 발굴과 작성에 씁니다.")
         ups = st.file_uploader("파일 업로드 (PDF · DOCX · TXT · HWP · HWPX)",
                                type=reader.SUPPORTED, accept_multiple_files=True,
                                key="doc_uploader")
@@ -633,26 +602,38 @@ if _step == 3:
                     st.text(d["text"][:1200] + ("…" if len(d["text"]) > 1200 else ""))
 
     with st.container(border=True):
-        st.markdown("**STEP 4 · 자유 메모** — 파일로 없는 내용은 여기 붙여넣으세요. 대충 쓴 경험 메모도 좋습니다.")
-        st.text_area("자유 재료", key="iv_extra_free", height=150, label_visibility="collapsed",
-                     placeholder="붙여넣을수록 발굴되는 소재가 많아집니다")
+        st.markdown("**STEP 2 · 뭘 써야 할지 막막하다면** — 파일도 경험도 없다고 느껴질 때, "
+                    "기억을 끌어내는 질문을 만들어 드립니다. 질문을 읽다 떠오른 경험은 ④단계 문항 아래 '경험 입력'에 적으세요.")
+        if st.button("🤔  기억 자극 질문 만들기", use_container_width=True) and _require_key():
+            with st.spinner("이 직무에 맞는 기억 자극 질문을 만드는 중…"):
+                try:
+                    spec = {SPEC_FIELDS[k]: st.session_state.get(f"sp_{k}", "") for k in SPEC_FIELDS}
+                    st.session_state.helper_qs = engine.memory_questions(
+                        engine.get_client(api_key), model,
+                        st.session_state.get("in_company", ""),
+                        st.session_state.get("in_role", ""), spec)
+                except engine.EngineError as e:
+                    st.error(str(e))
+        for g in st.session_state.helper_qs:
+            st.markdown(f"**{g.get('area', '')}**")
+            for qa in g.get("questions", []):
+                st.markdown(styles.note_box("Q. " + qa.get("q", ""),
+                                            "예: " + qa.get("example", "")), unsafe_allow_html=True)
 
     mine = st.button("⛏️  AI 소재 발굴 시작", type="primary", use_container_width=True)
     if mine and _require_key():
-        has_docs = bool(st.session_state.uploaded_docs)
-        if answered == 0 and not has_docs and not str(st.session_state.get("iv_extra_free", "")).strip():
-            st.warning("재료를 한 항목 이상 입력하거나 파일을 올려 주세요.")
+        spec = {SPEC_FIELDS[k]: st.session_state.get(f"sp_{k}", "") for k in SPEC_FIELDS}
+        has_spec = any(str(v).strip() for v in spec.values())
+        if not st.session_state.uploaded_docs and not has_spec:
+            st.warning("파일을 올리거나 ②단계에서 스펙을 입력해 주세요. 그게 발굴 재료가 됩니다.")
         else:
-            with st.spinner("적어 주신 재료와 업로드 파일에서 자소서 소재를 캐내는 중…"):
+            with st.spinner("업로드 파일과 스펙에서 자소서 소재를 캐내는 중…"):
                 try:
-                    spec = {SPEC_FIELDS[k]: st.session_state.get(f"sp_{k}", "") for k in SPEC_FIELDS}
-                    profile = dict(_profile_dict())
-                    profile["uploaded_docs"] = _docs_text()
                     st.session_state.materials = engine.mine_materials(
                         engine.get_client(api_key), model,
                         st.session_state.get("in_company", ""),
                         st.session_state.get("in_role", ""),
-                        profile, spec,
+                        _docs_text(), spec,
                         st.session_state.research_md,
                         engine.fit_summary_text(st.session_state.fit) if st.session_state.fit else "")
                 except engine.EngineError as e:
@@ -660,14 +641,14 @@ if _step == 3:
 
     if st.session_state.materials:
         st.markdown(styles.divider(), unsafe_allow_html=True)
-        st.markdown(styles.overline("—", "발굴된 소재", f"{len(st.session_state.materials)}개 — ④탭에서 문항별 경험 입력에 활용하세요"),
+        st.markdown(styles.overline("—", "발굴된 소재", f"{len(st.session_state.materials)}개 — ④단계에서 '소재 불러오기'로 바로 채울 수 있습니다"),
                     unsafe_allow_html=True)
         for m in st.session_state.materials:
             st.markdown(styles.material_card(m), unsafe_allow_html=True)
     else:
         st.markdown(styles.empty_state(
             "아직 발굴된 소재가 없습니다",
-            "위 재료를 채우고 'AI 소재 발굴 시작'을 누르면, 문항 유형별로 쓸 수 있는 경험 소재를 정리해 드립니다."),
+            "파일을 올리고 'AI 소재 발굴 시작'을 누르면, 문항 유형별로 쓸 수 있는 경험 소재를 초안까지 만들어 드립니다."),
             unsafe_allow_html=True)
 
 
@@ -718,13 +699,17 @@ if _step == 4:
             st.text_area("문항 (공고 원문 그대로)", key=f"q_text_{qid}", height=72,
                          placeholder="예: 예상치 못한 문제를 해결한 경험을 구체적으로 기술해 주십시오. (1,000자)")
 
-            # ── 이 문항 전용 경험 입력 ──
+            # ── 이 문항 전용 경험 입력 (유일한 경험 입력 창구) ──
             filled = _exp_filled_count(qid)
-            exp_label = f"🧩  이 문항에 쓸 경험 입력 — {filled}/{len(EXP_FIELDS)} 채움" if filled else "🧩  이 문항에 쓸 경험 입력 (비워 두면 발굴된 소재·프로필에서 자동 선택)"
+            exp_label = f"🧩  이 문항에 쓸 경험 입력 — {filled}/{len(EXP_FIELDS)} 채움" if filled else "🧩  이 문항에 쓸 경험 입력 (③에서 발굴한 소재로 자동 채울 수 있어요)"
             with st.expander(exp_label, expanded=(filled == 0 and idx == 1)):
                 if st.session_state.materials:
-                    st.caption("③에서 발굴한 소재: " + " · ".join(
-                        f"[{m.get('title', '')}]" for m in st.session_state.materials[:6]))
+                    st.selectbox(
+                        "⛏ 발굴된 소재 불러오기 — 선택하면 아래 5칸이 초안으로 채워집니다",
+                        ["직접 입력"] + [m.get("title", "") for m in st.session_state.materials],
+                        key=f"q_mat_{qid}", on_change=_fill_exp_from_material, args=(qid,))
+                else:
+                    st.caption("③단계에서 파일을 올려 소재를 발굴하면, 여기서 한 번에 불러올 수 있습니다.")
                 for f, label, ph in EXP_FIELDS:
                     st.text_area(label, key=f"q_exp_{qid}_{f}", height=72, placeholder=ph)
 

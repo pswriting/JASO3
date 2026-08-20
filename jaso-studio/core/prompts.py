@@ -206,14 +206,6 @@ def build_interview_block(interview: dict) -> str:
         "exp_action": "★ 이 문항 전용 경험 — 해결 행동(순서대로)",
         "exp_result": "★ 이 문항 전용 경험 — 결과(숫자·사실)",
         "exp_apply": "★ 이 문항 전용 경험 — 입사 후 활용",
-        "me_strength": "강점과 근거",
-        "me_weakness": "약점과 극복 노력",
-        "me_value": "가치관·일하는 원칙",
-        "me_reputation": "타인의 평가",
-        "co_reason": "이 회사에 끌린 개인적 계기",
-        "co_goal": "입사 후 목표(단기·장기)",
-        "co_spec": "직무 관련 핵심 스펙 요약",
-        "extra_free": "추가 재료(자유 메모)",
         "uploaded_docs": "업로드 문서에서 추출한 내용(이력서·경력기술서·기존 자소서)",
     }
     lines = []
@@ -261,15 +253,15 @@ def build_answer_prompt(company: str, role: str, question: str, limit: int, coun
 # ──────────────────────────────────────────────
 
 MINE_SYSTEM = """당신은 자기소개서 소재 발굴 전문 컨설턴트다.
-지원자가 흘리듯 적어둔 이력·메모에서 '자소서에 쓸 수 있는 경험 소재'를 캐낸다.
-- 소재는 반드시 지원자가 실제로 언급한 사실에서만 꺼낸다. 없는 경험을 만들지 않는다.
+지원자의 이력서·경력기술서·기존 자소서·스펙에서 '자소서에 쓸 수 있는 경험 소재'를 캐낸다.
+- 소재는 반드시 지원자 자료에 실제로 언급된 사실에서만 꺼낸다. 없는 경험을 만들지 않는다.
 - 각 소재는 어떤 문항 유형에 쓰면 좋은지까지 연결한다.
+- draft(경험 초안)의 각 칸은 자료에서 확인된 사실로만 채우고, 확인 안 되는 칸은 빈 문자열로 둔다.
 - 반드시 유효한 JSON 하나만 출력한다. 코드펜스·부연 설명 금지."""
 
 
-def build_mine_prompt(company: str, role: str, profile: dict, spec: dict,
+def build_mine_prompt(company: str, role: str, docs_text: str, spec: dict,
                       research_md: str, fit_summary: str) -> str:
-    profile_block = build_interview_block(profile)
     spec_lines = "\n".join(f"- {k}: {v}" for k, v in (spec or {}).items() if str(v).strip())
     ctx = ""
     if research_md:
@@ -277,8 +269,8 @@ def build_mine_prompt(company: str, role: str, profile: dict, spec: dict,
     if fit_summary:
         ctx += f"\n[적합도 진단 요약]\n{fit_summary[:800]}\n"
     return f"""[지원 기업] {company or '미정'} / [지원 직무] {role or '미정'}
-[지원자가 적어둔 재료]
-{profile_block}
+[업로드 문서에서 추출한 자료]
+{docs_text.strip() or '(업로드 문서 없음)'}
 [스펙]
 {spec_lines or '(없음)'}
 {ctx}
@@ -291,7 +283,48 @@ def build_mine_prompt(company: str, role: str, profile: dict, spec: dict,
       "summary": "상황→문제→해결→결과 한 줄 요약",
       "number_hook": "이 소재의 핵심 숫자나 검증 가능한 사실 (없으면 '수치 보완 필요')",
       "best_for": ["어울리는 문항 유형 1~3개 (예: 지원동기, 직무 역량, 갈등 해결, 문제 해결, 성장과정, 입사 후 포부)"],
-      "tip": "이 소재를 쓸 때 강조할 포인트 한 줄"
+      "tip": "이 소재를 쓸 때 강조할 포인트 한 줄",
+      "draft": {{
+        "situation": "상황(언제·어디서·역할) 1~2문장 초안 — 자료에 있는 사실만",
+        "problem": "문제와 원인 초안",
+        "action": "해결 행동 초안",
+        "result": "결과(숫자·사실) 초안",
+        "apply": "입사 후 활용 초안"
+      }}
+    }}
+  ]
+}}"""
+
+
+# ──────────────────────────────────────────────
+# 소재 발굴 도우미 — 기억 자극 질문
+# ──────────────────────────────────────────────
+
+HELPER_SYSTEM = """당신은 취업 준비생의 묻혀 있는 경험을 끌어내는 인터뷰 코치다.
+'쓸 경험이 없다'고 말하는 사람도 반드시 갖고 있는 기억을 자극하는 질문을 만든다.
+- 거창한 경험이 아니라 아르바이트·조별과제·동아리·일상에서 답할 수 있는 질문으로.
+- 지원 직무와 연결될 수 있는 방향으로 질문을 설계한다.
+- 반드시 유효한 JSON 하나만 출력한다. 코드펜스 금지."""
+
+
+def build_helper_prompt(company: str, role: str, spec: dict) -> str:
+    spec_lines = "\n".join(f"- {k}: {v}" for k, v in (spec or {}).items() if str(v).strip())
+    return f"""[지원 기업] {company or '미정'} / [지원 직무] {role or '미정'}
+[지원자 스펙]
+{spec_lines or '(입력 없음 — 일반 취준생 기준으로)'}
+
+이 지원자의 기억을 자극하는 질문 12개를 만들어라.
+4개 영역(직무 관련 경험 / 아르바이트·대외활동 / 학업·프로젝트 / 성격·일상)별로 3개씩.
+각 질문에는 "이런 것도 소재가 됩니다" 예시를 붙여라.
+
+아래 JSON 스키마로만 출력:
+{{
+  "groups": [
+    {{
+      "area": "영역 이름",
+      "questions": [
+        {{"q": "기억 자극 질문", "example": "이런 사소한 것도 소재가 된다는 예시 한 줄"}}
+      ]
     }}
   ]
 }}"""
