@@ -49,6 +49,16 @@ def _extract_text(resp) -> str:
 
 
 def _friendly_api_error(e: Exception) -> EngineError:
+    raw = str(getattr(e, "message", "") or e)
+    body = getattr(e, "body", None)
+    if isinstance(body, dict):
+        raw = f"{raw} {body}".strip()
+    low = raw.lower()
+    # 가장 흔한 400: 크레딧 미충전
+    if "credit balance" in low or "purchase credits" in low:
+        return EngineError(
+            "Anthropic 계정에 크레딧이 없습니다. console.anthropic.com → Billing에서 "
+            "크레딧을 충전(최소 $5)한 뒤 다시 시도해 주세요. API는 구독(Claude Pro)과 별도로 충전해야 합니다.")
     if isinstance(e, anthropic.AuthenticationError):
         return EngineError("API 키가 올바르지 않습니다. 사이드바에서 Anthropic API 키를 다시 확인해 주세요.")
     if isinstance(e, anthropic.PermissionDeniedError):
@@ -59,9 +69,11 @@ def _friendly_api_error(e: Exception) -> EngineError:
         return EngineError("요청 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.")
     if isinstance(e, anthropic.APIConnectionError):
         return EngineError("Anthropic 서버에 연결하지 못했습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요.")
+    if isinstance(e, anthropic.BadRequestError):
+        return EngineError(f"요청이 거부되었습니다 — {raw[:250]}")
     if isinstance(e, anthropic.APIStatusError):
-        return EngineError(f"API 오류가 발생했습니다 (status {e.status_code}). 잠시 후 다시 시도해 주세요.")
-    return EngineError(f"알 수 없는 오류가 발생했습니다: {e}")
+        return EngineError(f"API 오류 (status {e.status_code}) — {raw[:250]}")
+    return EngineError(f"알 수 없는 오류가 발생했습니다: {raw[:250]}")
 
 
 def call_claude(client, model: str, system: str, messages: list,
@@ -76,7 +88,7 @@ def call_claude(client, model: str, system: str, messages: list,
     try:
         resp = client.messages.create(**kwargs)
         return _extract_text(resp), web_search
-    except anthropic.BadRequestError:
+    except anthropic.BadRequestError as e:
         if web_search:
             # 웹서치 도구를 지원하지 않는 키/모델 → 검색 없이 폴백
             kwargs.pop("tools", None)
@@ -85,7 +97,7 @@ def call_claude(client, model: str, system: str, messages: list,
                 return _extract_text(resp), False
             except Exception as e2:
                 raise _friendly_api_error(e2)
-        raise
+        raise _friendly_api_error(e)
     except Exception as e:
         raise _friendly_api_error(e)
 
@@ -535,14 +547,17 @@ def dart_load_corp_map(dart_key: str):
     """전체 기업 코드 목록 다운로드 (호출측에서 캐시 권장)."""
     try:
         r = requests.get(f"{DART_BASE}/corpCode.xml",
-                         params={"crtfc_key": dart_key.strip()}, timeout=40)
+                         params={"crtfc_key": dart_key.strip()}, timeout=20)
         r.raise_for_status()
         zf = zipfile.ZipFile(io.BytesIO(r.content))
         xml_data = zf.read(zf.namelist()[0])
     except zipfile.BadZipFile:
         raise EngineError("DART API 키가 올바르지 않습니다. opendart.fss.or.kr에서 발급한 키인지 확인해 주세요.")
     except requests.RequestException:
-        raise EngineError("DART 서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+        raise EngineError(
+            "DART 전자공시에 연결하지 못해 이번 분석에서는 건너뜁니다 — "
+            "해외 서버(Streamlit Cloud 등)에서는 DART가 접속을 차단하는 경우가 있습니다. "
+            "웹 검색으로 재무·공시 정보를 대신 조사하므로 분석은 정상 진행됩니다.")
     root = ET.fromstring(xml_data)
     corps = []
     for el in root.iter("list"):

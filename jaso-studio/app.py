@@ -347,7 +347,7 @@ with st.sidebar:
 
     # DART 전자공시 키는 기본 내장 (secrets의 DART_API_KEY로 교체 가능)
     dart_key = _secret("DART_API_KEY") or engine.DEFAULT_DART_KEY
-    st.caption("📊 DART 전자공시 연동: 기본 탑재 (상장사 재무·공시 자동 분석)")
+    st.caption("📊 DART 전자공시: 기본 탑재 — 연결이 막힌 환경에서는 자동 생략되고 웹 검색으로 대신 조사합니다")
 
     st.markdown("---")
     st.markdown("##### 작업 저장 / 불러오기")
@@ -440,7 +440,8 @@ if _step == 1:
                         st.session_state.dart_snap = snap
                         dart_text = engine.dart_snapshot_to_text(snap)
                     except engine.EngineError as e:
-                        st.warning(str(e))
+                        st.session_state.dart_snap = None
+                        st.info(str(e), icon="ℹ️")
             with st.spinner("웹에서 최신 뉴스·전략·인재상을 조사하는 중… (약 30초~1분)"):
                 try:
                     result = engine.research_company(
