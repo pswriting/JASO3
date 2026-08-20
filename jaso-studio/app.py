@@ -23,6 +23,14 @@ st.set_page_config(
 )
 st.markdown(styles.GLOBAL_CSS, unsafe_allow_html=True)
 
+# 테마 설정(.streamlit/config.toml)이 없는 환경 → 기본 빨간 액센트를 골드 톤으로 보정
+try:
+    _theme_set = bool(st.get_option("theme.primaryColor"))
+except Exception:
+    _theme_set = False
+if not _theme_set:
+    st.markdown(styles.RED_FALLBACK_CSS, unsafe_allow_html=True)
+
 
 @st.cache_data(show_spinner=False)
 def _media_b64(relpath: str, max_mb: float = 15.0) -> str:
@@ -212,7 +220,7 @@ def _generate_one(qdata: dict, idx: int, quiet: bool = False):
                 "question": qdata["text"], "answer": result["answer"],
                 "notes": result["notes"], "chars": result["chars"],
                 "limit": qdata["limit"], "count_mode": qdata["count_mode"],
-                "used_search": result["used_search"], "ai": None,
+                "used_search": result["used_search"], "ai": None, "sim": None,
             }
             return True
         except engine.EngineError as e:
@@ -241,6 +249,20 @@ def _run_ai_scan(qid: int):
             st.error(str(e))
 
 
+def _run_sim_scan(qid: int):
+    ans = st.session_state.answers.get(qid)
+    if not ans:
+        return
+    with st.spinner("다른 지원자와 겹칠 유사도 위험을 측정하는 중…"):
+        try:
+            scan = engine.similarity_scan(engine.get_client(api_key), model, ans["answer"])
+            ans["sim"] = scan
+            st.session_state.answers[qid] = ans
+            st.rerun()
+        except engine.EngineError as e:
+            st.error(str(e))
+
+
 def _run_humanize(qid: int):
     ans = st.session_state.answers.get(qid)
     if not ans:
@@ -255,6 +277,28 @@ def _run_humanize(qid: int):
             ans.update(answer=r["answer"], chars=r["chars"],
                        notes=r["notes"] or ans.get("notes", ""))
             ans["ai"] = engine.ai_scan(client, model, r["answer"])
+            ans["sim"] = None  # 본문이 바뀌었으므로 유사도 재검사 필요
+            st.session_state.answers[qid] = ans
+            st.rerun()
+        except engine.EngineError as e:
+            st.error(str(e))
+
+
+def _run_uniquify(qid: int):
+    ans = st.session_state.answers.get(qid)
+    if not ans:
+        return
+    flags = (ans.get("sim") or {}).get("flags", [])
+    with st.spinner("겹치는 문장 틀을 이 지원자만의 표현으로 바꾸는 중… (재검사 포함)"):
+        try:
+            client = engine.get_client(api_key)
+            r = engine.uniquify_answer(
+                client, model, question=ans["question"], prev_answer=ans["answer"],
+                limit=ans["limit"], count_mode=ans["count_mode"], flags=flags)
+            ans.update(answer=r["answer"], chars=r["chars"],
+                       notes=r["notes"] or ans.get("notes", ""))
+            ans["sim"] = engine.similarity_scan(client, model, r["answer"])
+            ans["ai"] = None  # 본문이 바뀌었으므로 AI 감지 재검사 필요
             st.session_state.answers[qid] = ans
             st.rerun()
         except engine.EngineError as e:
@@ -637,35 +681,62 @@ with tab4:
             if ans:
                 subtitle, body = engine.split_subtitle(ans["answer"])
                 ai = ans.get("ai")
+                sim = ans.get("sim")
                 st.markdown(styles.answer_card(
                     ans["question"], subtitle, body, ans["chars"],
                     ans["limit"], ans["count_mode"],
                     extra_meta=("실시간 웹 검색 반영" if ans.get("used_search") else ""),
-                    ai_percent=(ai or {}).get("percent")),
+                    ai_percent=(ai or {}).get("percent"),
+                    sim_percent=(sim or {}).get("percent")),
                     unsafe_allow_html=True)
                 if ans.get("notes"):
                     st.markdown(styles.note_box("✍ 더 좋아지려면", ans["notes"]), unsafe_allow_html=True)
 
-                # AI 감지
+                # 검사·보정 도구
                 bc = st.columns(2)
                 with bc[0]:
-                    if st.button("🕵️  AI 감지 위험 측정", key=f"scan_{qid}", use_container_width=True) and _require_key():
+                    if st.button("🕵️  AI 감지 검사", key=f"scan_{qid}", use_container_width=True) and _require_key():
                         _run_ai_scan(qid)
                 with bc[1]:
+                    if st.button("📑  유사도 검사 (다른 지원자와 겹침)", key=f"simscan_{qid}", use_container_width=True) and _require_key():
+                        _run_sim_scan(qid)
+                bc2 = st.columns(2)
+                with bc2[0]:
                     if st.button("🧬  AI 티 제거 (휴먼라이징)", key=f"hum_{qid}", use_container_width=True) and _require_key():
                         _run_humanize(qid)
+                with bc2[1]:
+                    if st.button("♻️  유사도 낮추기 (표현 고유화)", key=f"uniq_{qid}", use_container_width=True) and _require_key():
+                        _run_uniquify(qid)
 
-                if ai:
-                    st.markdown(styles.ai_gauge(ai.get("percent"), ai.get("verdict", ""),
-                                                ai.get("comment", ""),
-                                                heuristic=ai.get("heuristic"), llm=ai.get("llm")),
-                                unsafe_allow_html=True)
-                    if ai.get("flags"):
-                        st.markdown(styles.flag_chips(ai["flags"]), unsafe_allow_html=True)
+                if ai or sim:
+                    gc = st.columns(2)
+                    with gc[0]:
+                        if ai:
+                            st.markdown("**AI 감지 위험**")
+                            st.markdown(styles.ai_gauge(ai.get("percent"), ai.get("verdict", ""),
+                                                        ai.get("comment", ""),
+                                                        heuristic=ai.get("heuristic"), llm=ai.get("llm")),
+                                        unsafe_allow_html=True)
+                            if ai.get("flags"):
+                                st.markdown(styles.flag_chips(ai["flags"]), unsafe_allow_html=True)
+                    with gc[1]:
+                        if sim:
+                            st.markdown("**유사도 위험 (다른 지원자와 겹침)**")
+                            st.markdown(styles.ai_gauge(sim.get("percent"), sim.get("verdict", ""),
+                                                        sim.get("comment", ""),
+                                                        heuristic=sim.get("heuristic"), llm=sim.get("llm")),
+                                        unsafe_allow_html=True)
+                            if sim.get("flags"):
+                                st.markdown(styles.flag_chips(sim["flags"]), unsafe_allow_html=True)
+                    details = []
+                    for fl in (ai or {}).get("flags", []):
+                        details.append(f"- **[AI 감지] {fl.get('pattern', '')}** — \"{fl.get('example', '')}\" → {fl.get('fix', '')}")
+                    for fl in (sim or {}).get("flags", []):
+                        details.append(f"- **[유사도] {fl.get('phrase', '')}** — {fl.get('why', '')} → {fl.get('fix', '')}")
+                    if details:
                         with st.expander("감지된 패턴 자세히"):
-                            for fl in ai["flags"]:
-                                st.markdown(f"- **{fl.get('pattern', '')}** — \"{fl.get('example', '')}\" → {fl.get('fix', '')}")
-                    st.caption("※ 자체 문체 통계와 AI 판독을 결합한 추정치입니다. 실제 감지기(GPTZero 등)의 결과와 다를 수 있습니다.")
+                            st.markdown("\n".join(details))
+                    st.caption("※ 자체 문체 통계와 AI 판독을 결합한 추정치입니다. 실제 감지기(GPTZero·카피킬러 등)의 결과와 다를 수 있습니다. 30% 이하를 목표로 보정하세요.")
 
                 rc = st.columns([3, 1.2])
                 with rc[0]:
@@ -686,7 +757,8 @@ with tab4:
                                         instruction=instr, limit=ans["limit"],
                                         count_mode=ans["count_mode"])
                                     ans.update(answer=r["answer"], chars=r["chars"],
-                                               notes=r["notes"] or ans.get("notes", ""), ai=None)
+                                               notes=r["notes"] or ans.get("notes", ""),
+                                               ai=None, sim=None)
                                     st.session_state.answers[qid] = ans
                                     st.rerun()
                                 except engine.EngineError as e:
@@ -731,6 +803,8 @@ with tab5:
         total_excl = sum(a["chars"]["excl"] for _, a in done)
         scanned = [a for _, a in done if a.get("ai")]
         avg_ai = round(sum(a["ai"]["percent"] for a in scanned) / len(scanned)) if scanned else None
+        sim_scanned = [a for _, a in done if a.get("sim")]
+        avg_sim = round(sum(a["sim"]["percent"] for a in sim_scanned) / len(sim_scanned)) if sim_scanned else None
         tiles = [
             ("완성 문항", f"{len(done)}개", f"전체 {len(st.session_state.questions)}개 중"),
             ("총 분량 · 공백 포함", f"{total_incl:,}자", ""),
@@ -738,6 +812,8 @@ with tab5:
         ]
         if avg_ai is not None:
             tiles.append(("평균 AI 감지 위험", f"{avg_ai}%", "추정치"))
+        if avg_sim is not None:
+            tiles.append(("평균 유사도 위험", f"{avg_sim}%", "추정치"))
         st.markdown(styles.stat_tiles(tiles), unsafe_allow_html=True)
 
         items = []
@@ -750,7 +826,8 @@ with tab5:
             })
             st.markdown(styles.answer_card(a["question"], subtitle, body, a["chars"],
                                            a["limit"], a["count_mode"],
-                                           ai_percent=(a.get("ai") or {}).get("percent")),
+                                           ai_percent=(a.get("ai") or {}).get("percent"),
+                                           sim_percent=(a.get("sim") or {}).get("percent")),
                         unsafe_allow_html=True)
 
         company = st.session_state.get("in_company", "")

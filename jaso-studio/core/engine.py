@@ -427,6 +427,90 @@ def humanize_answer(client, model: str, *, question: str, prev_answer: str,
 
 
 # ──────────────────────────────────────────────
+# 유사도(다른 지원자와 겹침) 진단 · 고유화
+# ──────────────────────────────────────────────
+
+_TEMPLATE_PHRASES = [
+    "기업 선택 시 가장 중요하게 생각하는 요인은", "가장 뛰어난 기업이라고 판단해 지원",
+    "행보에 동참해", "제가 지닌 전문성을 발휘", "확인할 수 있었습니다",
+    "다방면으로 노력한 결과", "문제를 해결하기 위해", "라는 사실을 발견했습니다",
+    "긍정적인 영향을 미칠 것입니다", "기여하겠습니다", "이바지하겠습니다",
+    "높은 인사고과를 받았습니다", "우수 직원으로", "직무에 적합하다고 생각합니다",
+    "어린 시절부터", "가치관입니다", "역량을 강화했습니다", "전문성을 강화했습니다",
+    "입사 후에도", "그 결과,",
+]
+
+
+def _similarity_heuristic(text: str) -> dict:
+    """상투 문형 밀도 기반 유사도 위험(0~100)."""
+    hits, found = 0.0, []
+    for ph in _TEMPLATE_PHRASES:
+        c = text.count(ph)
+        if c:
+            found.append(ph)
+            hits += 8 + 4 * (c - 1)
+    # 흔한 소제목 패턴
+    m = re.match(r"\s*\[([^\[\]]{2,40})\]", text)
+    if m and re.search(r"비결|이유|직무에 적합한", m.group(1)):
+        hits += 8
+    score = round(min(100, hits))
+    return {"score": score, "found": found[:8]}
+
+
+def similarity_scan(client, model: str, text: str) -> dict:
+    """유사도 위험(추정 %) = 로컬 상투 문형 밀도 50% + Claude 평가 50%."""
+    heur = _similarity_heuristic(text)
+    raw, _ = call_claude(client, model, prompts.SIM_SYSTEM,
+                         [{"role": "user", "content": prompts.build_simscan_prompt(text)}],
+                         max_tokens=2000, temperature=0.1)
+    data = _parse_json_loose(raw)
+    llm_p = int(data.get("probability", 50))
+    percent = round(0.5 * heur["score"] + 0.5 * llm_p)
+    if percent <= 30:
+        verdict = "낮음"
+    elif percent <= 60:
+        verdict = "주의"
+    else:
+        verdict = "높음"
+    flags = data.get("flags", [])
+    for ph in heur["found"]:
+        if not any(ph in str(f.get("phrase", "")) for f in flags):
+            flags.append({"phrase": ph, "why": "자소서에 매우 흔한 관용구",
+                          "fix": "같은 뜻의 새 문장으로 교체"})
+    return {"percent": percent, "verdict": verdict, "llm": llm_p,
+            "heuristic": heur["score"], "flags": flags[:6],
+            "comment": data.get("comment", "")}
+
+
+def uniquify_answer(client, model: str, *, question: str, prev_answer: str,
+                    limit: int, count_mode: str, flags: list):
+    """유사도 낮추기 — 사실·구조 유지, 문장 틀만 고유하게 재작성. 분량 보정 포함."""
+    system = _system_for_writing()
+    user = prompts.build_uniquify_prompt(question, prev_answer, limit, count_mode, flags)
+    messages = [{"role": "user", "content": user}]
+    raw, _ = call_claude(client, model, system, messages,
+                         max_tokens=_max_tokens_for(limit), temperature=0.9)
+    answer, notes = split_answer(raw)
+
+    lo, hi = int(limit * 0.92), limit
+    for _ in range(1):
+        n = count_chars(answer, count_mode)
+        if lo <= n <= hi:
+            break
+        messages = messages + [
+            {"role": "assistant", "content": raw},
+            {"role": "user", "content": prompts.build_length_fix_prompt(n, lo, hi, count_mode)},
+        ]
+        raw, _ = call_claude(client, model, system, messages,
+                             max_tokens=_max_tokens_for(limit), temperature=0.9)
+        new_answer, new_notes = split_answer(raw)
+        if new_answer:
+            answer, notes = new_answer, (new_notes or notes)
+
+    return {"answer": answer, "notes": notes, "chars": char_report(answer)}
+
+
+# ──────────────────────────────────────────────
 # DART 전자공시 API
 # ──────────────────────────────────────────────
 

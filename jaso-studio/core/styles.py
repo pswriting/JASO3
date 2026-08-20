@@ -7,12 +7,12 @@ import html as _html
 
 # ── 브랜드 토큰 ──────────────────────────
 BG = "#0A1120"                       # 최종 폴백 배경
-GLASS = "rgba(14,22,40,.55)"         # 카드
-GLASS_HARD = "rgba(12,20,37,.74)"    # 입력 필드
-BORDER = "rgba(242,236,222,.14)"
+GLASS = "rgba(12,19,35,.78)"         # 카드
+GLASS_HARD = "rgba(10,17,31,.92)"    # 입력 필드
+BORDER = "rgba(242,236,222,.17)"
 INK = "#F2EDE0"                      # 본문 아이보리
-MUTED = "#A7AFC2"
-FAINT = "#7C869C"
+MUTED = "#AEB6C8"
+FAINT = "#8B94A9"
 GOLD = "#C9A96A"
 GOLD_DIM = "rgba(201,169,106,.16)"
 NAVY_TXT = "#101A2E"                 # 밝은 버튼 위 글자
@@ -30,14 +30,14 @@ GLOBAL_CSS = f"""
     width: 100vw; height: 100vh;
     object-fit: cover;
     z-index: -2;
-    filter: saturate(112%) brightness(.9);
+    filter: saturate(105%) brightness(.55);
 }}
 .js-bgoverlay {{
     position: fixed; inset: 0; z-index: -1;
     background:
-      radial-gradient(1100px 500px at 78% -10%, rgba(201,169,106,.10), transparent 60%),
-      linear-gradient(180deg, rgba(7,12,24,.46) 0%, rgba(9,15,29,.74) 38vh,
-                      rgba(10,17,32,.92) 78vh, {BG} 115vh);
+      radial-gradient(1100px 500px at 78% -10%, rgba(201,169,106,.07), transparent 60%),
+      linear-gradient(180deg, rgba(6,10,20,.68) 0%, rgba(8,13,26,.84) 30vh,
+                      rgba(10,17,32,.95) 62vh, {BG} 96vh);
 }}
 /* 배경 영상 iframe을 전체 화면 배경으로 고정 (레이아웃 공간 차지 없음) */
 iframe[data-testid="stIFrame"] {{
@@ -65,14 +65,14 @@ h1, h2, h3 {{
     color: {INK} !important;
     letter-spacing: -0.01em;
 }}
-.stMarkdown p, .stMarkdown li, .stMarkdown td {{ color: #E7E2D4; }}
+.stMarkdown p, .stMarkdown li, .stMarkdown td {{ color: #ECE8DB; }}
 .stMarkdown strong {{ color: {INK}; }}
 .stMarkdown a {{ color: {GOLD}; }}
 [data-testid="stHeader"] {{ background: transparent; }}
 #MainMenu, footer, [data-testid="stToolbar"] {{ visibility: hidden; }}
 [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p,
 .stCaption, small {{ color: {MUTED} !important; }}
-[data-testid="stWidgetLabel"] p {{ color: #C9CFDC !important; font-size: .85rem; }}
+[data-testid="stWidgetLabel"] p {{ color: #D6DBE7 !important; font-size: .85rem; text-shadow: 0 1px 6px rgba(0,0,0,.5); }}
 
 /* ── 사이드바 ───────────────────────── */
 [data-testid="stSidebar"] {{
@@ -174,7 +174,7 @@ div[data-baseweb="select"] span, div[data-baseweb="select"] input {{
 /* ── 탭 (세그먼트 무드) ──────────────── */
 .stTabs [data-baseweb="tab-list"] {{
     gap: .25rem;
-    background: rgba(12,20,37,.5);
+    background: rgba(9,15,29,.8);
     border: 1px solid {BORDER};
     border-radius: 999px;
     padding: .3rem .35rem;
@@ -184,7 +184,8 @@ div[data-baseweb="select"] span, div[data-baseweb="select"] input {{
 .stTabs [data-baseweb="tab"] {{
     font-weight: 600;
     font-size: .92rem;
-    color: {MUTED};
+    color: #DDE1EC !important;
+    text-shadow: 0 1px 6px rgba(0,0,0,.7);
     padding: .5rem 1.05rem;
     border-radius: 999px;
     background: transparent;
@@ -196,9 +197,9 @@ div[data-baseweb="select"] span, div[data-baseweb="select"] input {{
 .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {{
     background-color: transparent !important;
 }}
-/* 테마 설정이 없어도 기본(빨간) 탭 밑줄이 보이지 않게 */
-.stTabs [data-baseweb="tab-list"] > div:not([data-baseweb="tab"]):not([role="tab"]) {{
-    background-color: transparent !important;
+/* 테마 설정이 없어도 기본(빨간) 탭 표시선이 골드로 보이게 */
+.stTabs .react-aria-SelectionIndicator {{
+    background-color: rgba(201,169,106,.9) !important;
 }}
 
 /* ── 컨테이너·익스팬더 (글래스 카드) ──── */
@@ -247,7 +248,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
     padding: 3.4rem 0 2.2rem;
     margin-bottom: .6rem;
 }}
-.js-hero .brand {{
+.js-hero .brand {{ text-shadow: 0 1px 8px rgba(0,0,0,.8);
     font-size: .74rem; font-weight: 700;
     letter-spacing: .5em; color: {GOLD};
     margin-bottom: 1.05rem;
@@ -257,12 +258,12 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
     font-size: 2.85rem; font-weight: 900;
     color: {INK} !important;
     margin: 0 0 .7rem 0; line-height: 1.24;
-    text-shadow: 0 2px 30px rgba(3,7,16,.55);
+    text-shadow: 0 2px 18px rgba(0,0,0,.85), 0 6px 44px rgba(0,0,0,.6);
 }}
 .js-hero .tagline {{
-    color: #C6CCDA; font-size: 1.02rem; font-weight: 300;
+    color: #DDE1EC; font-size: 1.02rem; font-weight: 300;
     letter-spacing: .03em;
-    text-shadow: 0 1px 14px rgba(3,7,16,.6);
+    text-shadow: 0 1px 10px rgba(0,0,0,.85);
 }}
 .js-hero .rule {{
     width: 64px; height: 2px;
@@ -272,7 +273,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
 
 .js-step {{ display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1.2rem; }}
 .js-step .s {{
-    font-size: .78rem; font-weight: 500; color: {MUTED};
+    font-size: .78rem; font-weight: 500; color: #C7CDDC;
     background: {GLASS}; border: 1px solid {BORDER};
     padding: .34rem .9rem; border-radius: 999px;
     backdrop-filter: blur(10px);
@@ -287,6 +288,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
 .js-overline .t {{
     font-family: 'Noto Serif KR', serif;
     font-size: 1.34rem; font-weight: 700; color: {INK};
+    text-shadow: 0 1px 8px rgba(0,0,0,.6);
 }}
 .js-overline .sub {{ font-size: .84rem; color: {MUTED}; }}
 
@@ -428,6 +430,19 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
     font-family: 'Noto Serif KR', serif;
     font-size: 1.08rem; font-weight: 700; color: {INK};
 }}
+</style>
+"""
+
+
+# 테마 설정(.streamlit/config.toml)이 없는 배포 환경용 —
+# 스트림릿 기본 빨간 액센트(슬라이더·체크박스·토글·프로그레스)를 골드 톤으로 회전
+RED_FALLBACK_CSS = """
+<style>
+.stSlider [role="group"], .stSlider [data-baseweb="slider"],
+.stCheckbox label, .stRadio label, .stProgress, [data-testid="stProgress"],
+.stSpinner, [data-testid="stFileUploaderDropzone"] progress {
+    filter: hue-rotate(40deg) saturate(.62) brightness(1.04);
+}
 </style>
 """
 
@@ -596,20 +611,24 @@ def ai_gauge(percent, verdict: str, comment: str, heuristic=None, llm=None) -> s
 def flag_chips(flags: list) -> str:
     if not flags:
         return ""
-    chips = "".join(f'<span class="js-chip">{esc(f.get("pattern", ""))}</span>' for f in flags[:5])
+    chips = "".join(
+        f'<span class="js-chip">{esc(f.get("pattern") or f.get("phrase") or "")}</span>'
+        for f in flags[:6])
     return f'<div class="js-chiprow">{chips}</div>'
 
 
 def answer_card(question: str, subtitle: str, body: str, chars: dict,
                 limit: int, count_mode: str, extra_meta: str = "",
-                ai_percent=None) -> str:
+                ai_percent=None, sim_percent=None) -> str:
     mode_txt = "공백 포함" if count_mode == "incl" else "공백 제외"
     sub_html = f'<div class="sub">{esc(subtitle)}</div>' if subtitle else ""
     n = chars.get("incl" if count_mode == "incl" else "excl", 0)
     meta = (f'<span>{mode_txt} <b>{n}</b>자 / 목표 {limit}자</span>'
             f'<span>공백 포함 {chars.get("incl", 0)}자 · 공백 제외 {chars.get("excl", 0)}자</span>')
     if ai_percent is not None:
-        meta += f'<span>AI 감지 위험 <b>{esc(ai_percent)}%</b> (추정)</span>'
+        meta += f'<span>AI 감지 위험 <b>{esc(ai_percent)}%</b></span>'
+    if sim_percent is not None:
+        meta += f'<span>유사도 위험 <b>{esc(sim_percent)}%</b></span>'
     if extra_meta:
         meta += f"<span>{esc(extra_meta)}</span>"
     return f"""
