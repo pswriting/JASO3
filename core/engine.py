@@ -501,6 +501,28 @@ def memory_questions(client, model: str, company: str, role: str, spec: dict):
     return data.get("groups", [])
 
 
+def recommend_materials(client, model: str, questions: list, materials: list,
+                        research_md: str = "", pass_md: str = "", role: str = ""):
+    """문항별 최적 소재 추천 — 합격 패턴·기업 분석 근거. {qid: {title, reason}} 반환."""
+    if not questions or not materials:
+        return {}
+    user = prompts.build_recommend_prompt(questions, materials_to_text(materials),
+                                          research_md, pass_md, role)
+    text, _ = call_claude(client, model, prompts.RECOMMEND_SYSTEM,
+                          [{"role": "user", "content": user}], max_tokens=1500)
+    data = _parse_json_loose(text)
+    valid_titles = {m.get("title", "") for m in materials}
+    out = {}
+    for r in data.get("recs", []):
+        try:
+            qid = int(r.get("qid"))
+        except (TypeError, ValueError):
+            continue
+        if r.get("title") in valid_titles:
+            out[qid] = {"title": r["title"], "reason": str(r.get("reason", ""))[:200]}
+    return out
+
+
 def materials_to_text(materials: list) -> str:
     """생성 프롬프트 주입용."""
     if not materials:

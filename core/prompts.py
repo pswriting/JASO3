@@ -464,6 +464,39 @@ def build_pass_prompt(company: str, role: str) -> str:
 ## 출처
 (제목 — URL 목록)"""
 
+RECOMMEND_SYSTEM = """당신은 자기소개서 전략 컨설턴트다.
+문항마다 '어떤 경험 소재를 쓰면 서류 통과 확률이 가장 높은가'를 고른다.
+- 합격 자소서 패턴 분석(공통 소재 유형·체크리스트)과 기업 분석(인재상·전략)을 최우선 근거로 삼는다.
+- 소재 제목은 주어진 목록에서 '한 글자도 바꾸지 말고 그대로' 골라 쓴다. 목록에 없는 소재를 지어내지 않는다.
+- 같은 소재를 여러 문항에 중복 추천하지 않는다 (더 적합한 문항에 배정하고, 나머지는 차선 소재).
+- 반드시 유효한 JSON 하나만 출력한다. 코드펜스·부연 설명 금지."""
+
+
+def build_recommend_prompt(questions: list, materials_text: str, research_md: str,
+                           pass_md: str, role: str) -> str:
+    q_lines = "\n".join(f"- (qid={q['id']}) {q['text']}" for q in questions)
+    ctx = ""
+    if pass_md:
+        pa = pass_md[:1600]
+        if "체크리스트" in pass_md and "체크리스트" not in pa:
+            m = re.search(r"##[^\n]*체크리스트[\s\S]{0,600}", pass_md)
+            if m:
+                pa += "\n" + m.group(0)
+        ctx += f"\n[합격 자소서 패턴 분석 — 최우선 근거]\n{pa}\n"
+    if research_md:
+        ctx += f"\n[기업 분석 요약]\n{research_md[:1200]}\n"
+    return f"""[지원 직무] {role or '미정'}
+[문항 목록]
+{q_lines}
+[지원자의 발굴된 소재 목록]
+{materials_text}
+{ctx}
+각 문항에 가장 적합한 소재를 하나씩 추천하라. 근거는 합격 패턴·기업 분석과 연결해 한 문장으로.
+적합한 소재가 없는 문항은 결과에서 빼라.
+아래 JSON 스키마로만 출력:
+{{"recs": [{{"qid": 문항 qid 숫자, "title": "소재 제목 (목록 그대로)", "reason": "추천 이유 한 문장"}}]}}"""
+
+
 HELPER_SYSTEM = """당신은 취업 준비생의 묻혀 있는 경험을 끌어내는 인터뷰 코치다.
 '쓸 경험이 없다'고 말하는 사람도 반드시 갖고 있는 기억을 자극하는 질문을 만든다.
 - 거창한 경험이 아니라 아르바이트·조별과제·동아리·일상에서 답할 수 있는 질문으로.

@@ -66,6 +66,9 @@ _DEFAULTS = {
     "q_seq": 0,
     "answers": {},            # id -> {question, answer, notes, chars, limit, count_mode, used_search, ai, sim}
     "materials": [],          # AI 발굴 소재
+    "mat_recs": {},           # 문항별 AI 추천 소재 {qid: {title, reason}}
+    "mat_rec_sig": "",        # 추천 재계산 방지용 서명
+    "mat_rec_applied": {},    # 자동 적용된 추천 {qid: title}
     "helper_qs": [],          # 기억 자극 질문 (소재 발굴 도우미)
     "uploaded_docs": [],      # [{name, text, chars, warn}]
     "doc_sigs": [],
@@ -766,6 +769,39 @@ if _step == 3:
             for m in st.session_state.materials:
                 st.markdown(f"- **{m.get('title', '')}** — {m.get('summary', '')[:80]}")
 
+    # ── 문항별 소재 자동 추천 (합격 패턴·기업 분석 근거) ──
+    # 사용자가 소재를 고르지 않아도, 프로그램이 문항마다 최적 소재를 골라 미리 채워 둔다.
+    _q_texts = [(q["id"], st.session_state.get(f"q_text_{q['id']}", "").strip())
+                for q in st.session_state.questions]
+    _q_texts = [(i, t) for i, t in _q_texts if t]
+    if st.session_state.materials and _q_texts and api_key.strip():
+        import hashlib as _hl
+        _sig = _hl.md5(("|".join(t for _, t in _q_texts) + "§"
+                        + "|".join(m.get("title", "") for m in st.session_state.materials)
+                        ).encode()).hexdigest()
+        if st.session_state.mat_rec_sig != _sig:
+            with st.spinner("합격 패턴·기업 분석을 근거로 문항별 추천 소재를 고르는 중…"):
+                try:
+                    st.session_state.mat_recs = engine.recommend_materials(
+                        engine.get_client(api_key), model,
+                        [{"id": i, "text": t} for i, t in _q_texts],
+                        st.session_state.materials,
+                        st.session_state.research_md, st.session_state.pass_md,
+                        st.session_state.get("in_role", ""))
+                except engine.EngineError:
+                    pass  # 추천 실패는 조용히 넘어감 — 직접 선택 경로는 그대로 동작
+            st.session_state.mat_rec_sig = _sig
+        # 추천을 자동 적용 — 단, 사용자가 이미 경험을 쓰거나 소재를 고른 문항은 건드리지 않는다
+        for _qid, _rec in st.session_state.mat_recs.items():
+            _title = _rec.get("title", "")
+            if not _title or st.session_state.mat_rec_applied.get(_qid) == _title:
+                continue
+            _cur = st.session_state.get(f"q_mat_{_qid}", "직접 입력")
+            if _exp_filled_count(_qid) == 0 and _cur in ("직접 입력", None, ""):
+                st.session_state[f"q_mat_{_qid}"] = _title
+                _fill_exp_from_material(_qid)
+                st.session_state.mat_rec_applied[_qid] = _title
+
     st.markdown("**문항 빠른 추가**")
     pc = st.columns(6)
     presets = [
@@ -808,13 +844,28 @@ if _step == 3:
 
             # ── 이 문항 전용 경험 입력 (유일한 경험 입력 창구) ──
             filled = _exp_filled_count(qid)
-            exp_label = f"🧩  이 문항에 쓸 경험 입력 — {filled}/{len(EXP_FIELDS)} 채움" if filled else "🧩  이 문항에 쓸 경험 입력 (②에서 발굴한 소재로 자동 채울 수 있어요)"
+            _rec = st.session_state.mat_recs.get(qid) or {}
+            _rec_on = bool(_rec) and st.session_state.mat_rec_applied.get(qid) == _rec.get("title") \
+                and st.session_state.get(f"q_mat_{qid}") == _rec.get("title")
+            if _rec_on:
+                exp_label = f"✨  AI 추천 소재 적용됨 — {_rec['title']} (다른 경험 선택은 자유)"
+            elif filled:
+                exp_label = f"🧩  이 문항에 쓸 경험 입력 — {filled}/{len(EXP_FIELDS)} 채움"
+            else:
+                exp_label = "🧩  이 문항에 쓸 경험 입력 (②에서 발굴한 소재로 자동 채울 수 있어요)"
             with st.expander(exp_label, expanded=(filled == 0 and idx == 1)):
                 if st.session_state.materials:
+                    if _rec:
+                        st.markdown(styles.note_box(
+                            "✨ AI 추천 — " + _rec.get("title", ""),
+                            (_rec.get("reason", "") or "합격 패턴·기업 분석 기준으로 이 문항에 가장 적합한 소재입니다.")
+                            + " (다른 경험을 쓰고 싶다면 아래에서 자유롭게 바꾸세요.)"), unsafe_allow_html=True)
+                    _opts = ["직접 입력"] + [m.get("title", "") for m in st.session_state.materials]
+                    if st.session_state.get(f"q_mat_{qid}") not in _opts:
+                        st.session_state[f"q_mat_{qid}"] = "직접 입력"  # 재발굴로 소재가 바뀐 경우 안전 처리
                     st.selectbox(
-                        "⛏ 발굴된 소재 불러오기 — 선택하면 아래 5칸이 초안으로 채워집니다",
-                        ["직접 입력"] + [m.get("title", "") for m in st.session_state.materials],
-                        key=f"q_mat_{qid}", on_change=_fill_exp_from_material, args=(qid,))
+                        "⛏ 소재 선택 — 바꾸면 아래 5칸이 그 소재의 초안으로 채워집니다 (선택 사항)",
+                        _opts, key=f"q_mat_{qid}", on_change=_fill_exp_from_material, args=(qid,))
                 else:
                     st.caption("위의 '⛏ 소재 발굴'에서 이력서를 올려 소재를 발굴하면, 여기서 한 번에 불러올 수 있습니다.")
                 for f, label, ph in EXP_FIELDS:
