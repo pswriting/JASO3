@@ -492,15 +492,46 @@ with st.sidebar:
     try:
         import streamlit.components.v1 as _cmp
         _k = api_key.strip()
-        if remember and _k and _k != _saved_key and st.session_state.get("_ck_written") != _k:
-            _cmp.html(f'<script>parent.document.cookie = "jaso_api_key=" + '
-                      f'encodeURIComponent({json.dumps(_k)}) + '
-                      f'"; max-age=2592000; path=/; SameSite=Lax";</script>', height=0)
-            st.session_state["_ck_written"] = _k
-        elif not remember and _saved_key:
-            _cmp.html('<script>parent.document.cookie = '
-                      '"jaso_api_key=; max-age=0; path=/";</script>', height=0)
-            st.session_state.pop("_ck_written", None)
+        if remember and _k:
+            # 저장: 쿠키(HTTPS면 Secure 포함) + localStorage 이중 저장.
+            # 매 실행 재저장해 만료 연장·저장 실패를 자가 복구한다 (순수 JS라 rerun 유발 없음).
+            _cmp.html(f"""<script>
+try {{
+  var v = {json.dumps(_k)};
+  var sec = (parent.location.protocol === 'https:') ? '; Secure' : '';
+  parent.document.cookie = 'jaso_api_key=' + encodeURIComponent(v)
+    + '; max-age=2592000; path=/; SameSite=Lax' + sec;
+  parent.localStorage.setItem('jaso_api_key', v);
+}} catch (e) {{}}
+</script>""", height=0)
+        elif not remember:
+            _cmp.html("""<script>
+try {
+  parent.document.cookie = 'jaso_api_key=; max-age=0; path=/';
+  parent.document.cookie = 'jaso_api_key=; max-age=0; path=/; Secure';
+  parent.localStorage.removeItem('jaso_api_key');
+  parent.sessionStorage.removeItem('jaso_ck_restored');
+} catch (e) {}
+</script>""", height=0)
+        if not _k and not _saved_key:
+            # 복원: 서버가 키를 못 받았는데 브라우저에 저장본이 있으면
+            # 쿠키를 다시 심고 한 번만 새로고침해 입력란을 자동으로 채운다.
+            _cmp.html("""<script>
+try {
+  var d = parent.document, ls = parent.localStorage, ss = parent.sessionStorage;
+  var v = ls.getItem('jaso_api_key');
+  var hasCookie = d.cookie.indexOf('jaso_api_key=') !== -1;
+  if ((v || hasCookie) && !ss.getItem('jaso_ck_restored')) {
+    if (v && !hasCookie) {
+      var sec = (parent.location.protocol === 'https:') ? '; Secure' : '';
+      d.cookie = 'jaso_api_key=' + encodeURIComponent(v)
+        + '; max-age=2592000; path=/; SameSite=Lax' + sec;
+    }
+    ss.setItem('jaso_ck_restored', '1');   // 새로고침 무한 반복 방지
+    parent.location.reload();
+  }
+} catch (e) {}
+</script>""", height=0)
     except Exception:
         pass
     model_label = st.selectbox("모델", list(engine.MODEL_CHOICES.keys()) + ["직접 입력"])
