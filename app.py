@@ -119,6 +119,35 @@ SPEC_FIELDS = {
 }
 
 
+import re as _re
+_MD_HEAD_FIX = _re.compile(r"(?<![\n#])(#{2,4} )")
+
+
+def _md_guard(gen):
+    """스트리밍 마크다운 이중 방어 — 진행 멘트 제거 + 줄 중간 '##' 헤더 보정.
+    engine 쪽 보정과 중복 적용돼도 결과가 같다(멱등)."""
+    raw, sent = "", 0
+
+    def _fix(txt):
+        i = txt.find("## ")
+        if i == -1:
+            return ""
+        return _MD_HEAD_FIX.sub(r"\n\n\1", txt[i:]).lstrip("\n")
+
+    for t in gen:
+        raw += t
+        fixed = _fix(raw)
+        safe = max(0, len(fixed) - 8)
+        if safe > sent:
+            yield fixed[sent:safe]
+            sent = safe
+    fixed = _fix(raw)
+    if not fixed and raw.strip():
+        fixed = raw
+    if len(fixed) > sent:
+        yield fixed[sent:]
+
+
 def _secret(name: str) -> str:
     try:
         return st.secrets.get(name, "") or ""
@@ -582,11 +611,11 @@ if _step == 1:
                 status = {}
                 with st.container(border=True):
                     st.caption("실시간으로 조사하며 작성 중… (아래에 바로 표시됩니다)")
-                    md = st.write_stream(engine.research_company_stream(
+                    md = st.write_stream(_md_guard(engine.research_company_stream(
                         engine.get_client(api_key), model, company,
                         st.session_state.get("in_role", ""),
                         st.session_state.get("in_posting", ""), dart_text,
-                        fast=speed.startswith("⚡"), status=status))
+                        fast=speed.startswith("⚡"), status=status)))
                 st.session_state.research_md = md or ""
                 st.session_state.research_meta = (
                     f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} 기준"
@@ -643,9 +672,9 @@ if _step == 1:
                 status = {}
                 with st.container(border=True):
                     st.caption("공개 합격 자소서를 검색·분석 중… (아래에 바로 표시됩니다)")
-                    md = st.write_stream(engine.analyze_pass_essays_stream(
+                    md = st.write_stream(_md_guard(engine.analyze_pass_essays_stream(
                         engine.get_client(api_key), model, company,
-                        st.session_state.get("in_role", ""), status=status))
+                        st.session_state.get("in_role", ""), status=status)))
                 st.session_state.pass_md = md or ""
                 st.session_state.pass_meta = (
                     f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} 기준"
