@@ -184,7 +184,8 @@ def build_research_prompt(company: str, role: str, posting: str, dart_text: str,
     parts = [f"'{company}' 기업을 '{role or '미정'}' 직무 지원자 관점에서 조사하라.",
              "웹 검색을 사용해 최신 사실을 확인하라."]
     if fast:
-        parts.append("검색은 3회 이내로 끝내고, 각 섹션은 핵심만 간결하게 쓴다. 속도가 중요하다.")
+        parts.append("검색은 3회 이내로 끝내고, 각 섹션은 핵심만 간결하게 쓴다. 속도가 중요하다. "
+                     f"단, 검색 중 1회는 반드시 '{company} 인재상'(또는 핵심가치)을 확인하는 데 쓴다.")
     if dart_text:
         parts.append(f"\n[DART 전자공시 확인 데이터 — 그대로 신뢰하고 활용]\n{dart_text}")
     if posting:
@@ -200,7 +201,9 @@ def build_research_prompt(company: str, role: str, posting: str, dart_text: str,
 (날짜 포함 5개 이내. 신사업·투자·수주 중심, 수치 포함)
 
 ## 인재상·채용 맥락
-(핵심만 3줄 이내)
+- **공식 인재상**: (반드시 채운다 — 회사 공식 채용 사이트·홈페이지의 인재상/핵심가치를 검색해 키워드와 설명을 그대로 적는다.
+  공식 인재상을 못 찾으면 모기업·그룹 인재상을 쓰고 '그룹 기준'이라 표기하고, 그것도 없으면 조직문화·채용공고에서 추정해 '추정'이라 표기한다. 이 항목을 비우면 실패다.)
+- **채용 맥락**: (최근 채용 동향 1~2줄)
 
 ## 지원동기 연결 포인트 TOP 5
 (각 항목을 "회사의 구체 사실 → 지원자가 연결할 방향" 구조로. 자소서에 바로 인용 가능한 수치 포함)
@@ -221,7 +224,10 @@ def build_research_prompt(company: str, role: str, posting: str, dart_text: str,
 (날짜 포함 5~8개. 신사업, 투자, 수주, 조직 변화 중심)
 
 ## 인재상·조직문화·채용 맥락
-(공식 인재상, 핵심가치, 최근 채용 동향)
+- **공식 인재상**: (반드시 채운다 — 회사 공식 채용 사이트·홈페이지의 인재상/핵심가치를 검색해 키워드와 설명을 그대로 적는다.
+  공식 인재상을 못 찾으면 모기업·그룹 인재상을 쓰고 '그룹 기준'이라 표기하고, 그것도 없으면 조직문화·채용공고에서 추정해 '추정'이라 표기한다. 이 항목을 비우면 실패다.)
+- **조직문화**: (일하는 방식, 평가 문화 등 확인된 것)
+- **채용 맥락**: (최근 채용 동향)
 
 ## '{role or '지원'}' 직무 관련 이슈와 동향
 (이 직무 지원자가 알아야 할 회사·산업 이슈)
@@ -320,7 +326,13 @@ def build_answer_prompt(company: str, role: str, question: str, limit: int, coun
     if hint.strip():
         blocks.append(f"\n[이 문항에 쓸 소재·방향 (지원자 지정 — 최우선 반영)]\n{hint.strip()}")
     if research_md:
-        blocks.append(f"\n[기업 리서치 자료 — 지원동기·포부에 구체 사실로 인용]\n{research_md[:4000]}")
+        res_block = research_md[:4000]
+        # 리서치가 길어 잘려도 인재상 섹션은 반드시 포함
+        if "인재상" in research_md and "인재상" not in res_block:
+            m = re.search(r"##[^\n]*인재상[\s\S]{0,800}", research_md)
+            if m:
+                res_block += "\n(…)\n" + m.group(0)
+        blocks.append(f"\n[기업 리서치 자료 — 지원동기·포부에 구체 사실로 인용]\n{res_block}")
     if fit_summary:
         blocks.append(f"\n[직무 적합도 진단 요약 — 강점은 살리고 보완점은 방어]\n{fit_summary[:1500]}")
     if pass_analysis:
@@ -328,8 +340,13 @@ def build_answer_prompt(company: str, role: str, question: str, limit: int, coun
     if is_freeform:
         blocks.append(f"\n{FREEFORM_CAREER_GUIDE}")
     is_motivation = bool(re.search(r"지원.{0,6}(동기|이유|사유)|입사.{0,4}(희망|결심)", question or ""))
-    motivation_line = ("5) 이 문항은 지원동기다 — 제6조에 따라 '회사 지원동기'(리서치 구체 사실 2개 이상 인용)와 "
+    motivation_line = ("6) 이 문항은 지원동기다 — 제6조에 따라 '회사 지원동기'(리서치 구체 사실 2개 이상 인용)와 "
                        "'직무 지원동기'(내 경험·강점 연결)를 모두 담아라.\n" if is_motivation else "")
+    talent_line = ""
+    if research_md and ("인재상" in research_md or "핵심가치" in research_md):
+        talent_line = ("5) 리서치 자료의 '인재상·핵심가치'를 반영하라 — 인재상 키워드와 맞닿는 지원자의 경험·태도를 골라 "
+                       "그 가치가 행동으로 드러나게 쓴다. 단, '저는 귀사의 인재상인 ○○에 부합합니다'처럼 "
+                       "인재상을 직접 언급·나열하지 말고, 읽는 사람이 인재상과 겹친다고 느끼게만 하라.\n")
     blocks.append(f"""
 지시:
 1) 문체 헌법을 지켜 이 문항의 답변을 작성하라.
@@ -337,7 +354,7 @@ def build_answer_prompt(company: str, role: str, question: str, limit: int, coun
    전용 경험이 없을 때만 다른 재료에서 이 문항에 가장 적합한 것을 고른다.
 3) 소제목은 맨 앞 1개. 두괄식. 경험은 상황→문제제기→원인→해결책→결과→입사 후 활용 순서.
 4) 출력 형식(===ANSWER=== / ===NOTES===)을 지켜라.
-{motivation_line}""")
+{talent_line}{motivation_line}""")
     return "\n".join(blocks)
 
 
