@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 자소서 스튜디오 (JASO STUDIO) v2
-읽는 순간 뽑고 싶어지는 자기소개서 — 실시간 기업 분석 · 적합도 진단 · 소재 발굴 · AI 감지 방어
+읽는 순간 뽑고 싶어지는 자기소개서 — 실시간 기업 분석 · 소재 발굴 · AI 감지 방어
 """
 import base64
 import json
@@ -340,7 +340,7 @@ def _generate_one(qdata: dict, idx: int, quiet: bool = False):
 
 
 def _fill_exp_from_material(qid: int):
-    """④에서 발굴된 소재 선택 시 경험 5칸을 초안으로 자동 채움."""
+    """③에서 발굴된 소재 선택 시 경험 5칸을 초안으로 자동 채움."""
     sel = st.session_state.get(f"q_mat_{qid}")
     if not sel or sel == "직접 입력":
         return
@@ -479,7 +479,7 @@ with st.sidebar:
 
     # DART 전자공시 키는 기본 내장 (secrets의 DART_API_KEY로 교체 가능)
     dart_key = _secret("DART_API_KEY") or engine.DEFAULT_DART_KEY
-    st.caption("📊 DART 전자공시: 기본 탑재 — 연결이 막힌 환경에서는 자동 생략되고 웹 검색으로 대신 조사합니다")
+    st.caption("📊 DART 전자공시 연동: 기본 탑재")
 
     st.markdown("---")
     st.markdown("##### 작업 저장 / 불러오기")
@@ -500,11 +500,10 @@ with st.sidebar:
     st.markdown("---")
     with st.expander("ℹ️ 사용 순서"):
         st.markdown(
-            "1. **이력서·소재 발굴** — 이력서 파일만 올리면 소재 자동 발굴\n   (파일이 없으면 이력서 양식으로 직접 입력)\n"
-            "2. **기업 분석** — 회사·직무 실시간 분석 (지원동기의 근거)\n"
-            "3. **적합도 진단** — 합격 가능성 판별\n"
-            "4. **자소서 생성** — 문항마다 소재 불러와 생성,\n   AI 감지·유사도 검사 (소재 발굴도 이 안에서 가능)\n"
-            "5. **완성본** — 검토 후 DOCX/TXT 다운로드")
+            "1. **기업 분석** — 회사·직무 실시간 분석 (지원동기의 근거)\n"
+            "2. **이력서·소재 발굴** — 이력서 파일만 올리면 소재 자동 발굴\n   (파일이 없으면 이력서 양식으로 직접 입력)\n"
+            "3. **자소서 생성** — 문항마다 소재 불러와 생성,\n   AI 감지·유사도 검사 (소재 발굴도 이 안에서 가능)\n"
+            "4. **완성본** — 검토 후 DOCX/TXT 다운로드")
 
 # ──────────────────────────────────────────────
 # 헤더 + 단계 내비게이션
@@ -512,11 +511,10 @@ with st.sidebar:
 st.markdown(styles.hero_html(), unsafe_allow_html=True)
 
 STEP_TITLES = {
-    1: "①  이력서·소재 발굴",
-    2: "②  기업 분석",
-    3: "③  적합도 진단",
-    4: "④  자소서 생성",
-    5: "⑤  완성본",
+    1: "①  기업 분석",
+    2: "②  이력서·소재 발굴",
+    3: "③  자소서 생성",
+    4: "④  완성본",
 }
 
 
@@ -524,13 +522,15 @@ def _goto(n: int):
     st.session_state.step = n
 
 
-_nav = st.columns(5)
+_nav = st.columns(len(STEP_TITLES))
 for _i, (_n, _label) in enumerate(STEP_TITLES.items()):
     with _nav[_i]:
         st.button(_label, key=f"nav_{_n}", use_container_width=True,
                   type=("primary" if st.session_state.step == _n else "secondary"),
                   on_click=_goto, args=(_n,))
 
+if st.session_state.step not in STEP_TITLES:   # 구버전 저장 파일(5단계) 호환
+    st.session_state.step = 1
 _step = st.session_state.step
 
 
@@ -542,10 +542,10 @@ def _require_key() -> bool:
 
 
 # ══════════════════════════════════════════════
-# ② 기업 분석
+# ① 기업 분석
 # ══════════════════════════════════════════════
-if _step == 2:
-    st.markdown(styles.overline("02", "기업 실시간 분석", "웹 검색 + DART 전자공시"), unsafe_allow_html=True)
+if _step == 1:
+    st.markdown(styles.overline("01", "기업 실시간 분석", "웹 검색 + DART 전자공시"), unsafe_allow_html=True)
     st.caption("지원할 회사의 최신 뉴스·실적·인재상을 실시간으로 조사해 지원동기의 '근거'를 만듭니다.")
 
     c1, c2 = st.columns(2)
@@ -565,17 +565,16 @@ if _step == 2:
         if not company:
             st.warning("기업명을 입력해 주세요.")
         elif _require_key():
+            # DART 공시는 조용히 시도 — 실패해도 아무 문구 없이 웹 검색만으로 진행
             dart_text = ""
             if dart_key.strip() and not st.session_state.get("dart_disabled"):
-                with st.spinner("DART 전자공시 확인 중…"):
-                    try:
-                        snap = engine.dart_snapshot(dart_key, company)
-                        st.session_state.dart_snap = snap
-                        dart_text = engine.dart_snapshot_to_text(snap)
-                    except engine.EngineError:
-                        st.session_state.dart_snap = None
-                        st.session_state.dart_disabled = True  # 이 세션에서는 재시도 안 함
-                        st.caption("ℹ️ DART 연결 불가 — 웹 검색으로 대신 조사합니다.")
+                try:
+                    snap = engine.dart_snapshot(dart_key, company)
+                    st.session_state.dart_snap = snap
+                    dart_text = engine.dart_snapshot_to_text(snap)
+                except Exception:
+                    st.session_state.dart_snap = None
+                    st.session_state.dart_disabled = True  # 이 세션에서는 재시도 안 함
             try:
                 status = {}
                 with st.container(border=True):
@@ -616,8 +615,6 @@ if _step == 2:
             with st.expander("최근 6개월 주요 공시"):
                 for d in snap["disclosures"]:
                     st.markdown(f"- `{d['일자']}` {d['보고서']}")
-    elif snap and not snap.get("found"):
-        st.info(snap.get("reason", ""))
 
     if st.session_state.research_md:
         st.markdown(styles.divider(), unsafe_allow_html=True)
@@ -666,91 +663,12 @@ if _step == 2:
 
 
 # ══════════════════════════════════════════════
-# ③ 직무 적합도 진단
+# ② 이력서·소재 발굴 (메인)
 # ══════════════════════════════════════════════
-if _step == 3:
-    st.markdown(styles.overline("03", "직무 적합도 진단", "서류 심사관의 눈으로"), unsafe_allow_html=True)
-    st.caption("스펙을 입력하면 지원 직무 기준으로 합격 가능성을 판별하고, 자소서에 쓸 소재까지 추천합니다. "
-               "①단계에서 '이력서 양식으로 직접 입력'을 채웠다면 그대로 여기에 들어와 있습니다.")
-
-    cols = st.columns(3)
-    keys = list(SPEC_FIELDS.items())
-    for i, (k, label) in enumerate(keys):
-        with cols[i % 3]:
-            st.text_area(label, key=f"sp_{k}", height=88)
-
-    use_fit_search = st.toggle("웹 검색으로 이 직무의 채용 요건까지 확인해서 평가 (기업 분석을 안 했을 때 권장)",
-                               value=False)
-    run_fit = st.button("⚖️  적합도 진단 실행", type="primary", use_container_width=True)
-
-    if run_fit and _require_key():
-        spec = {SPEC_FIELDS[k]: st.session_state.get(f"sp_{k}", "") for k in SPEC_FIELDS}
-        if not any(str(v).strip() for v in spec.values()):
-            st.warning("스펙을 한 항목 이상 입력해 주세요.")
-        else:
-            with st.spinner("서류 심사 기준으로 진단 중…"):
-                try:
-                    st.session_state.fit = engine.analyze_fit(
-                        engine.get_client(api_key), model,
-                        st.session_state.get("in_company", ""),
-                        st.session_state.get("in_role", ""),
-                        spec, st.session_state.research_md,
-                        st.session_state.get("in_posting", ""),
-                        use_search=use_fit_search)
-                except engine.EngineError as e:
-                    st.error(str(e))
-
-    fit = st.session_state.fit
-    if fit:
-        st.markdown(styles.divider(), unsafe_allow_html=True)
-        st.markdown(styles.hero_score(fit.get("overall", "?"), fit.get("verdict", ""),
-                                      fit.get("one_line", "")), unsafe_allow_html=True)
-
-        hard = str(fit.get("hard_check", "")).strip()
-        if hard and "특이사항 없음" not in hard:
-            st.error(f"**지원 자격 체크** — {hard}", icon="🚨")
-
-        m1, m2 = st.columns([1.1, 1])
-        with m1:
-            st.markdown("**역량 축별 평가**")
-            for name, score in (fit.get("scores") or {}).items():
-                st.markdown(styles.meter(name, score), unsafe_allow_html=True)
-        with m2:
-            st.markdown("**강점 — 자소서에서 밀 것**")
-            for s in fit.get("strengths", []):
-                st.markdown(f"- **{s.get('title', '')}** — {s.get('why', '')}")
-            st.markdown("**보완점 — 방어 전략**")
-            for g in fit.get("gaps", []):
-                st.markdown(f"- **{g.get('title', '')}** → {g.get('fix', '')}")
-
-        if fit.get("materials"):
-            st.markdown(styles.divider(), unsafe_allow_html=True)
-            st.markdown("**이 스펙으로 쓸 수 있는 자소서 소재**")
-            for mtr in fit["materials"]:
-                st.markdown(styles.note_box(mtr.get("question_type", "소재"),
-                                            mtr.get("story", "")), unsafe_allow_html=True)
-    else:
-        st.markdown(styles.empty_state(
-            "아직 진단 결과가 없습니다",
-            "스펙을 입력하고 '적합도 진단 실행'을 눌러 주세요. 진단 결과의 강점·보완점은 자소서 생성에 자동 반영됩니다."),
-            unsafe_allow_html=True)
-
-
-# ══════════════════════════════════════════════
-# ① 이력서·소재 발굴 (메인)
-# ══════════════════════════════════════════════
-if _step == 1:
-    st.markdown(styles.overline("01", "이력서·소재 발굴", "이력서만 올리면, 자소서 소재가 나옵니다"), unsafe_allow_html=True)
+if _step == 2:
+    st.markdown(styles.overline("02", "이력서·소재 발굴", "이력서만 올리면, 자소서 소재가 나옵니다"), unsafe_allow_html=True)
     st.caption("이 프로그램의 핵심 기능입니다. 이력서 파일을 올리면 즉시 소재 발굴까지 자동으로 진행됩니다. "
-               "파일이 없다면 아래 이력서 양식으로 직접 입력하세요. 경험 입력은 ④단계에서 문항마다 한 번만 합니다.")
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.text_input("지원 기업명 (선택 — 입력하면 소재를 이 회사에 맞게 고릅니다)",
-                      key="in_company", placeholder="예: 한화갤러리아, Applied Materials Korea")
-    with c2:
-        st.text_input("지원 직무 (선택)", key="in_role",
-                      placeholder="예: 영업관리, Customer Support Technician")
+               "파일이 없다면 아래 이력서 양식으로 직접 입력하세요. 경험 입력은 ③단계에서 문항마다 한 번만 합니다.")
 
     # ── 기본 경로: 이력서 파일 업로드 → 자동 발굴 ──
     with st.container(border=True):
@@ -765,7 +683,7 @@ if _step == 1:
     # ── 파일이 없는 사람: 이력서 양식 직접 입력 ──
     with st.expander("📝  이력서 파일이 없다면 — 이력서 양식으로 직접 입력",
                      expanded=(not st.session_state.uploaded_docs and not st.session_state.materials)):
-        st.caption("이력서 대신 아래 양식을 채우면 이걸 재료로 소재를 발굴합니다. 채운 내용은 ③ 적합도 진단에도 그대로 쓰입니다.")
+        st.caption("이력서 대신 아래 양식을 채우면 이걸 재료로 소재를 발굴합니다.")
         cols = st.columns(3)
         for i, (k, label) in enumerate(SPEC_FIELDS.items()):
             with cols[i % 3]:
@@ -780,7 +698,7 @@ if _step == 1:
     # ── 도우미: 기억 자극 질문 ──
     with st.expander("🤔  뭘 써야 할지 막막하다면 — 기억 자극 질문 받기 (선택)"):
         st.caption("파일도 경험도 없다고 느껴질 때, 기억을 끌어내는 질문을 만들어 드립니다. "
-                   "떠오른 경험은 위 '추가 경험 메모'나 ④단계 문항 아래 '경험 입력'에 적으세요.")
+                   "떠오른 경험은 위 '추가 경험 메모'나 ③단계 문항 아래 '경험 입력'에 적으세요.")
         if st.button("기억 자극 질문 만들기", use_container_width=True) and _require_key():
             with st.spinner("이 직무에 맞는 기억 자극 질문을 만드는 중…"):
                 try:
@@ -804,7 +722,7 @@ if _step == 1:
 
     if st.session_state.materials:
         st.markdown(styles.divider(), unsafe_allow_html=True)
-        st.markdown(styles.overline("—", "발굴된 소재", f"{len(st.session_state.materials)}개 — ④단계에서 '소재 불러오기'로 바로 채울 수 있습니다"),
+        st.markdown(styles.overline("—", "발굴된 소재", f"{len(st.session_state.materials)}개 — ③단계에서 '소재 불러오기'로 바로 채울 수 있습니다"),
                     unsafe_allow_html=True)
         for m in st.session_state.materials:
             st.markdown(styles.material_card(m), unsafe_allow_html=True)
@@ -817,10 +735,10 @@ if _step == 1:
 
 
 # ══════════════════════════════════════════════
-# ④ 자소서 생성
+# ③ 자소서 생성
 # ══════════════════════════════════════════════
-if _step == 4:
-    st.markdown(styles.overline("04", "자소서 생성", "문항마다 경험을 넣고, 그 자리에서 생성"), unsafe_allow_html=True)
+if _step == 3:
+    st.markdown(styles.overline("03", "자소서 생성", "문항마다 경험을 넣고, 그 자리에서 생성"), unsafe_allow_html=True)
     st.caption("실제 공고의 문항을 붙여넣고 → 그 문항에 쓸 경험을 입력한 뒤 → 생성하세요. AI 감지 검사와 휴먼라이징까지 한 화면에서 끝납니다.")
 
     # ── 이 단계 안에서도 소재 발굴 가능 ──
@@ -828,7 +746,7 @@ if _step == 4:
     _mine_label = (f"⛏  소재 발굴 — 현재 {_mat_n}개 발굴됨 (이력서 추가·재발굴 가능)"
                    if _mat_n else "⛏  소재 발굴 — 이력서를 올리면 여기서 바로 발굴됩니다")
     with st.expander(_mine_label, expanded=False):
-        st.caption("①단계로 돌아갈 필요 없습니다. 여기서 이력서를 올리거나 발굴을 다시 돌리면, 아래 문항의 '소재 불러오기'에 바로 반영됩니다.")
+        st.caption("②단계로 돌아갈 필요 없습니다. 여기서 이력서를 올리거나 발굴을 다시 돌리면, 아래 문항의 '소재 불러오기'에 바로 반영됩니다.")
         ups_q = st.file_uploader("이력서 파일 추가 (PDF · DOCX · TXT · HWP · HWPX)",
                                  type=reader.SUPPORTED, accept_multiple_files=True,
                                  key="doc_uploader_q")
@@ -885,7 +803,7 @@ if _step == 4:
 
             # ── 이 문항 전용 경험 입력 (유일한 경험 입력 창구) ──
             filled = _exp_filled_count(qid)
-            exp_label = f"🧩  이 문항에 쓸 경험 입력 — {filled}/{len(EXP_FIELDS)} 채움" if filled else "🧩  이 문항에 쓸 경험 입력 (①에서 발굴한 소재로 자동 채울 수 있어요)"
+            exp_label = f"🧩  이 문항에 쓸 경험 입력 — {filled}/{len(EXP_FIELDS)} 채움" if filled else "🧩  이 문항에 쓸 경험 입력 (②에서 발굴한 소재로 자동 채울 수 있어요)"
             with st.expander(exp_label, expanded=(filled == 0 and idx == 1)):
                 if st.session_state.materials:
                     st.selectbox(
@@ -1026,10 +944,10 @@ if _step == 4:
 
 
 # ══════════════════════════════════════════════
-# ⑤ 완성본·다운로드
+# ④ 완성본·다운로드
 # ══════════════════════════════════════════════
-if _step == 5:
-    st.markdown(styles.overline("05", "완성본 검토와 다운로드"), unsafe_allow_html=True)
+if _step == 4:
+    st.markdown(styles.overline("04", "완성본 검토와 다운로드"), unsafe_allow_html=True)
 
     ordered = [(q["id"], st.session_state.answers.get(q["id"]))
                for q in st.session_state.questions]
@@ -1038,7 +956,7 @@ if _step == 5:
     if not done:
         st.markdown(styles.empty_state(
             "완성된 답변이 아직 없습니다",
-            "④ 탭에서 문항별 답변을 생성하면 이곳에서 전체를 검토하고 파일로 내려받을 수 있습니다."),
+            "③단계에서 문항별 답변을 생성하면 이곳에서 전체를 검토하고 파일로 내려받을 수 있습니다."),
             unsafe_allow_html=True)
     else:
         total_incl = sum(a["chars"]["incl"] for _, a in done)
@@ -1114,7 +1032,7 @@ with _bn[0]:
         st.button(f"←  이전 · {STEP_TITLES[_step - 1]}", key="nav_prev",
                   use_container_width=True, on_click=_goto, args=(_step - 1,))
 with _bn[1]:
-    if _step < 5:
+    if _step < 4:
         st.button(f"다음 · {STEP_TITLES[_step + 1]}  →", key="nav_next",
                   type="primary", use_container_width=True,
                   on_click=_goto, args=(_step + 1,))
