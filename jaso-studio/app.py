@@ -52,7 +52,10 @@ if _bg_mp4 or _bg_webm:
 else:
     st.markdown(styles.video_background("app/static/bg.mp4"), unsafe_allow_html=True)
 st.markdown(styles.overlay_div(), unsafe_allow_html=True)
-st.markdown(styles.menu_button_html(), unsafe_allow_html=True)
+# core/styles.py가 구버전이어도 앱이 죽지 않게 방어적으로 호출
+_menu_btn = getattr(styles, "menu_button_html", None)
+if callable(_menu_btn):
+    st.markdown(_menu_btn(), unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────
 # 세션 상태 초기화
