@@ -7,12 +7,13 @@ import html as _html
 
 # ── 브랜드 토큰 ──────────────────────────
 BG = "#0A1120"                       # 최종 폴백 배경
-GLASS = "rgba(12,19,35,.78)"         # 카드
-GLASS_HARD = "rgba(10,17,31,.92)"    # 입력 필드
+VIDEO_H = "min(46vh, 480px)"         # 배경 영상이 차지하는 상단 밴드 높이
+GLASS = "rgba(12,19,35,.86)"         # 카드
+GLASS_HARD = "rgba(10,17,31,.95)"    # 입력 필드
 BORDER = "rgba(242,236,222,.17)"
-INK = "#F2EDE0"                      # 본문 아이보리
-MUTED = "#AEB6C8"
-FAINT = "#8B94A9"
+INK = "#F5F1E6"                      # 본문 아이보리
+MUTED = "#BCC4D4"
+FAINT = "#98A1B6"
 GOLD = "#C9A96A"
 GOLD_DIM = "rgba(201,169,106,.16)"
 NAVY_TXT = "#101A2E"                 # 밝은 버튼 위 글자
@@ -22,30 +23,48 @@ BAD = "#E07B5F"
 
 GLOBAL_CSS = f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700;900&family=Noto+Sans+KR:wght@200;300;400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+/* ── 에스코어 드림 (S-Core Dream) — 전체 폰트 통일 ── */
+@font-face {{ font-family: 'S-Core Dream'; font-weight: 300; font-display: swap;
+  src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-3Light.woff') format('woff'); }}
+@font-face {{ font-family: 'S-Core Dream'; font-weight: 400; font-display: swap;
+  src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-4Regular.woff') format('woff'); }}
+@font-face {{ font-family: 'S-Core Dream'; font-weight: 500; font-display: swap;
+  src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-5Medium.woff') format('woff'); }}
+@font-face {{ font-family: 'S-Core Dream'; font-weight: 600; font-display: swap;
+  src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-6Bold.woff') format('woff'); }}
+@font-face {{ font-family: 'S-Core Dream'; font-weight: 700; font-display: swap;
+  src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-6Bold.woff') format('woff'); }}
+@font-face {{ font-family: 'S-Core Dream'; font-weight: 800; font-display: swap;
+  src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-7ExtraBold.woff') format('woff'); }}
+@font-face {{ font-family: 'S-Core Dream'; font-weight: 900; font-display: swap;
+  src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-8Heavy.woff') format('woff'); }}
 
-/* ── 배경 비디오 ─────────────────────── */
+/* ── 배경 비디오 — 상단 밴드에만 표시 ── */
 .js-bgvid {{
-    position: fixed; inset: 0;
-    width: 100vw; height: 100vh;
+    position: fixed; top: 0; left: 0;
+    width: 100vw; height: {VIDEO_H};
     object-fit: cover;
     z-index: -2;
     filter: saturate(105%) brightness(.55);
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 55%, transparent 100%);
+    mask-image: linear-gradient(180deg, #000 0%, #000 55%, transparent 100%);
 }}
 .js-bgoverlay {{
-    position: fixed; inset: 0; z-index: -1;
+    position: fixed; top: 0; left: 0; right: 0; height: {VIDEO_H}; z-index: -1;
     background:
-      radial-gradient(1100px 500px at 78% -10%, rgba(201,169,106,.07), transparent 60%),
-      linear-gradient(180deg, rgba(6,10,20,.68) 0%, rgba(8,13,26,.84) 30vh,
-                      rgba(10,17,32,.95) 62vh, {BG} 96vh);
+      radial-gradient(900px 380px at 78% -10%, rgba(201,169,106,.06), transparent 60%),
+      linear-gradient(180deg, rgba(6,10,20,.55) 0%, rgba(9,15,28,.78) 55%, {BG} 100%);
 }}
-/* 배경 영상 iframe만 전체 화면 배경으로 고정 (다른 컴포넌트 iframe에는 영향 없음) */
+/* 배경 영상 iframe — 상단 밴드로만 고정, 아래는 단색 배경 (다른 컴포넌트 iframe에는 영향 없음) */
 iframe[data-testid="stIFrame"][srcdoc*="js-bg-video-marker"] {{
-    position: fixed !important; inset: 0 !important;
-    width: 100vw !important; height: 100vh !important;
+    position: fixed !important; top: 0 !important; left: 0 !important;
+    width: 100vw !important; height: {VIDEO_H} !important;
     z-index: -2 !important; border: 0 !important;
     pointer-events: none !important;
     display: block !important;
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 55%, transparent 100%);
+    mask-image: linear-gradient(180deg, #000 0%, #000 55%, transparent 100%);
 }}
 
 /* ── 기본 ───────────────────────────── */
@@ -53,19 +72,31 @@ html, body {{ background: {BG}; }}
 .stApp {{
     background: transparent !important;
     color: {INK};
-    font-family: 'Noto Sans KR', -apple-system, sans-serif;
+    font-family: 'S-Core Dream', 'Noto Sans KR', -apple-system, sans-serif;
 }}
+.stApp p, .stApp li, .stApp label, .stApp span, .stApp div,
+.stApp input, .stApp textarea, .stApp button, .stApp summary {{
+    font-family: 'S-Core Dream', 'Noto Sans KR', -apple-system, sans-serif;
+}}
+/* 머티리얼 아이콘(화살표 등)은 아이콘 폰트 유지 */
+.stApp [data-testid="stIconMaterial"],
+.stApp span[translate="no"],
+.stApp .material-symbols-rounded, .stApp .material-symbols-outlined {{
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined' !important;
+}}
+/* 본문 가독성 */
+.stMarkdown p {{ line-height: 1.85; font-size: .96rem; }}
 .block-container {{
     max-width: 1120px;
     padding-top: 1.8rem;
     padding-bottom: 6rem;
 }}
 h1, h2, h3 {{
-    font-family: 'Noto Serif KR', serif !important;
+    font-family: 'S-Core Dream', 'Noto Sans KR', sans-serif !important;
     color: {INK} !important;
     letter-spacing: -0.01em;
 }}
-.stMarkdown p, .stMarkdown li, .stMarkdown td {{ color: #ECE8DB; }}
+.stMarkdown p, .stMarkdown li, .stMarkdown td {{ color: #F0ECDF; }}
 .stMarkdown strong {{ color: {INK}; }}
 .stMarkdown a {{ color: {GOLD}; }}
 [data-testid="stHeader"] {{ background: transparent; pointer-events: none; }}
@@ -124,7 +155,7 @@ body:not(:has(section[data-testid="stSidebar"])) .js-menu-btn {{
 }}
 [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p,
 .stCaption, small {{ color: {MUTED} !important; }}
-[data-testid="stWidgetLabel"] p {{ color: #D6DBE7 !important; font-size: .85rem; text-shadow: 0 1px 6px rgba(0,0,0,.5); }}
+[data-testid="stWidgetLabel"] p {{ color: #E2E7F1 !important; font-size: .87rem; text-shadow: 0 1px 6px rgba(0,0,0,.5); }}
 
 /* ── 사이드바 ───────────────────────── */
 [data-testid="stSidebar"] {{
@@ -306,7 +337,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
     margin-bottom: 1.05rem;
 }}
 .js-hero h1 {{
-    font-family: 'Noto Serif KR', serif;
+    font-family: 'S-Core Dream', 'Noto Sans KR', sans-serif;
     font-size: 2.85rem; font-weight: 900;
     color: {INK} !important;
     margin: 0 0 .7rem 0; line-height: 1.24;
@@ -330,15 +361,15 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
     padding: .34rem .9rem; border-radius: 999px;
     backdrop-filter: blur(10px);
 }}
-.js-step .s b {{ color: {GOLD}; font-family: 'Noto Serif KR', serif; margin-right: .35rem; }}
+.js-step .s b {{ color: {GOLD}; font-family: 'S-Core Dream', 'Noto Sans KR', sans-serif; margin-right: .35rem; }}
 
 .js-overline {{ display: flex; align-items: baseline; gap: .7rem; margin: 1.5rem 0 .35rem; }}
 .js-overline .no {{
-    font-family: 'Noto Serif KR', serif;
+    font-family: 'S-Core Dream', 'Noto Sans KR', sans-serif;
     font-size: .8rem; font-weight: 700; color: {GOLD}; letter-spacing: .2em;
 }}
 .js-overline .t {{
-    font-family: 'Noto Serif KR', serif;
+    font-family: 'S-Core Dream', 'Noto Sans KR', sans-serif;
     font-size: 1.34rem; font-weight: 700; color: {INK};
     text-shadow: 0 1px 8px rgba(0,0,0,.6);
 }}
@@ -362,7 +393,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
     letter-spacing: .14em; margin-bottom: .35rem; text-transform: uppercase;
 }}
 .js-stat .v {{
-    font-family: 'Noto Serif KR', serif;
+    font-family: 'S-Core Dream', 'Noto Sans KR', sans-serif;
     font-size: 1.3rem; font-weight: 700; color: {INK}; line-height: 1.2;
 }}
 .js-stat .s {{ font-size: .76rem; color: {MUTED}; margin-top: .25rem; }}
@@ -374,7 +405,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
     backdrop-filter: blur(18px);
 }}
 .js-hero-score .num {{
-    font-family: 'Noto Serif KR', serif;
+    font-family: 'S-Core Dream', 'Noto Sans KR', sans-serif;
     font-size: 3.6rem; font-weight: 900; color: {INK}; line-height: 1;
 }}
 .js-hero-score .unit {{ font-size: 1.1rem; color: {FAINT}; font-weight: 400; }}
@@ -395,7 +426,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
 .js-meter .head {{ display: flex; justify-content: space-between; align-items: baseline; margin-bottom: .32rem; }}
 .js-meter .name {{ font-size: .87rem; font-weight: 500; color: #DCD7C8; }}
 .js-meter .val {{
-    font-family: 'Noto Serif KR', serif;
+    font-family: 'S-Core Dream', 'Noto Sans KR', sans-serif;
     font-size: .94rem; font-weight: 700; color: {GOLD};
 }}
 .js-meter .track {{
@@ -422,13 +453,13 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
     padding-bottom: .75rem; border-bottom: 1px dashed {BORDER};
 }}
 .js-answer .sub {{
-    font-family: 'Noto Serif KR', serif;
+    font-family: 'S-Core Dream', 'Noto Sans KR', sans-serif;
     font-size: 1.18rem; font-weight: 700; color: {INK};
     margin-bottom: .8rem;
 }}
 .js-answer .sub::before {{ content: "["; color: {GOLD}; margin-right: 2px; }}
 .js-answer .sub::after  {{ content: "]"; color: {GOLD}; margin-left: 2px; }}
-.js-answer .body {{ font-size: .96rem; line-height: 1.92; color: #EDE8DA; }}
+.js-answer .body {{ font-size: .97rem; line-height: 1.95; color: #F2EEE1; }}
 .js-answer .meta {{
     margin-top: 1.05rem; padding-top: .75rem;
     border-top: 1px dashed {BORDER};
@@ -456,7 +487,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
     backdrop-filter: blur(16px);
 }}
 .js-ai .num {{
-    font-family: 'Noto Serif KR', serif;
+    font-family: 'S-Core Dream', 'Noto Sans KR', sans-serif;
     font-size: 2.7rem; font-weight: 900; line-height: 1;
 }}
 .js-ai .num.good {{ color: {GOOD}; }}
@@ -479,7 +510,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] {{
     backdrop-filter: blur(14px);
 }}
 .js-empty .big {{
-    font-family: 'Noto Serif KR', serif;
+    font-family: 'S-Core Dream', 'Noto Sans KR', sans-serif;
     font-size: 1.08rem; font-weight: 700; color: {INK};
 }}
 </style>
@@ -572,6 +603,35 @@ video{{position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;
   }}
   v.addEventListener("error", tryNext);
   tryNext();
+
+  // 스크롤하면 배경 영상이 서서히 사라지게 — 영상은 상단(히어로)에서만 보인다
+  try {{
+    var P = window.parent, D = P.document;
+    var me = null;
+    var ifr = D.querySelectorAll('iframe');
+    for (var j = 0; j < ifr.length; j++) {{
+      if ((ifr[j].getAttribute('srcdoc') || '').indexOf('js-bg-video-marker') !== -1) {{ me = ifr[j]; break; }}
+    }}
+    var ov = D.querySelector('.js-bgoverlay');
+    if (me) {{
+      me.style.transition = 'opacity .35s ease';
+      if (ov) ov.style.transition = 'opacity .35s ease';
+      var onScroll = function (st) {{
+        var o = Math.max(0, 1 - st / 320);
+        me.style.opacity = o;
+        if (ov) ov.style.opacity = o;
+        try {{
+          if (o <= 0 && !v.paused) v.pause();
+          else if (o > 0 && v.paused) {{ var pp = v.play(); if (pp && pp.catch) pp.catch(function () {{}}); }}
+        }} catch (e2) {{}}
+      }};
+      D.addEventListener('scroll', function (e) {{
+        var t = e.target;
+        if (t && t.matches && t.matches('section[data-testid="stMain"]')) onScroll(t.scrollTop);
+        else if (t === D) onScroll(D.scrollingElement ? D.scrollingElement.scrollTop : 0);
+      }}, true);
+    }}
+  }} catch (e3) {{}}
 }})();
 </script>
 </body></html>"""

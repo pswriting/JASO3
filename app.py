@@ -464,7 +464,7 @@ def _run_uniquify(qid: int):
 # ──────────────────────────────────────────────
 with st.sidebar:
     st.markdown(
-        '<div style="font-family:\'Noto Serif KR\',serif;font-size:1.25rem;font-weight:900;'
+        '<div style="font-family:\'S-Core Dream\',\'Noto Sans KR\',sans-serif;font-size:1.25rem;font-weight:900;'
         'color:#F2EDE0;letter-spacing:.06em;margin-bottom:.1rem;">✒️ 자소서 스튜디오</div>'
         '<div style="font-size:.72rem;color:#C9A96A;letter-spacing:.3em;margin-bottom:1rem;">JASO STUDIO</div>',
         unsafe_allow_html=True)
@@ -489,48 +489,98 @@ with st.sidebar:
                 'style="color:#C9A96A;text-decoration:none;">→ Anthropic API 키 발급 바로가기</a></div>',
                 unsafe_allow_html=True)
     remember = st.checkbox("이 브라우저에 키 기억하기 (30일)", value=True, key="remember_key")
+    if _saved_key and api_key.strip() == _saved_key:
+        st.caption("✓ 저장된 키를 자동으로 불러왔습니다")
     try:
         import streamlit.components.v1 as _cmp
         _k = api_key.strip()
         if remember and _k:
-            # 저장: 쿠키(HTTPS면 Secure 포함) + localStorage 이중 저장.
-            # 매 실행 재저장해 만료 연장·저장 실패를 자가 복구한다 (순수 JS라 rerun 유발 없음).
+            # 저장: 쿠키(Secure 자동) + localStorage — 자기 문서와 부모 문서 양쪽 경로로 이중 시도.
+            # 순수 JS라 rerun을 유발하지 않고, 매 실행 재저장해 만료를 연장한다.
             _cmp.html(f"""<script>
-try {{
+(function () {{
   var v = {json.dumps(_k)};
-  var sec = (parent.location.protocol === 'https:') ? '; Secure' : '';
-  parent.document.cookie = 'jaso_api_key=' + encodeURIComponent(v)
-    + '; max-age=2592000; path=/; SameSite=Lax' + sec;
-  parent.localStorage.setItem('jaso_api_key', v);
-}} catch (e) {{}}
+  function save(w) {{
+    try {{
+      var sec = (w.location.protocol === 'https:') ? '; Secure' : '';
+      w.document.cookie = 'jaso_api_key=' + encodeURIComponent(v)
+        + '; max-age=2592000; path=/; SameSite=Lax' + sec;
+      w.localStorage.setItem('jaso_api_key', v);
+      return true;
+    }} catch (e) {{ return false; }}
+  }}
+  save(window) || save(parent);
+  try {{ save(parent); }} catch (e) {{}}
+}})();
 </script>""", height=0)
         elif not remember:
             _cmp.html("""<script>
-try {
-  parent.document.cookie = 'jaso_api_key=; max-age=0; path=/';
-  parent.document.cookie = 'jaso_api_key=; max-age=0; path=/; Secure';
-  parent.localStorage.removeItem('jaso_api_key');
-  parent.sessionStorage.removeItem('jaso_ck_restored');
-} catch (e) {}
+(function () {
+  function wipe(w) {
+    try {
+      w.document.cookie = 'jaso_api_key=; max-age=0; path=/';
+      w.document.cookie = 'jaso_api_key=; max-age=0; path=/; Secure';
+      w.localStorage.removeItem('jaso_api_key');
+      w.sessionStorage.removeItem('jaso_ck_restored');
+    } catch (e) {}
+  }
+  wipe(window); wipe(parent);
+})();
 </script>""", height=0)
         if not _k and not _saved_key:
-            # 복원: 서버가 키를 못 받았는데 브라우저에 저장본이 있으면
-            # 쿠키를 다시 심고 한 번만 새로고침해 입력란을 자동으로 채운다.
+            # 복원: 서버가 키를 못 받았어도 브라우저 저장본이 있으면
+            # ① 쿠키를 다시 심고 ② API 키 입력란을 직접 채운다 (React 네이티브 setter).
+            # 그래도 실패하면 마지막 수단으로 한 번만 새로고침한다.
             _cmp.html("""<script>
-try {
-  var d = parent.document, ls = parent.localStorage, ss = parent.sessionStorage;
-  var v = ls.getItem('jaso_api_key');
-  var hasCookie = d.cookie.indexOf('jaso_api_key=') !== -1;
-  if ((v || hasCookie) && !ss.getItem('jaso_ck_restored')) {
-    if (v && !hasCookie) {
-      var sec = (parent.location.protocol === 'https:') ? '; Secure' : '';
-      d.cookie = 'jaso_api_key=' + encodeURIComponent(v)
+(function () {
+  var v = null;
+  try { v = localStorage.getItem('jaso_api_key'); } catch (e) {}
+  if (!v) { try { v = parent.localStorage.getItem('jaso_api_key'); } catch (e) {} }
+  if (!v) return;
+  function cookie(w) {
+    try {
+      var sec = (w.location.protocol === 'https:') ? '; Secure' : '';
+      w.document.cookie = 'jaso_api_key=' + encodeURIComponent(v)
         + '; max-age=2592000; path=/; SameSite=Lax' + sec;
-    }
-    ss.setItem('jaso_ck_restored', '1');   // 새로고침 무한 반복 방지
-    parent.location.reload();
+    } catch (e) {}
   }
-} catch (e) {}
+  cookie(window); cookie(parent);
+  function fill() {
+    try {
+      var P = parent, d = P.document;
+      var inp = d.querySelector('section[data-testid="stSidebar"] input[type="password"]');
+      if (!inp) return false;
+      if (inp.value) return true;
+      var setter = Object.getOwnPropertyDescriptor(P.HTMLInputElement.prototype, 'value').set;
+      setter.call(inp, v);
+      inp.dispatchEvent(new P.Event('input', { bubbles: true }));
+      inp.dispatchEvent(new P.FocusEvent('focusout', { bubbles: true }));
+      return true;
+    } catch (e) { return false; }
+  }
+  var tries = 0;
+  var timer = setInterval(function () {
+    tries++;
+    var done = false;
+    try {
+      var inp = parent.document.querySelector('section[data-testid="stSidebar"] input[type="password"]');
+      done = !!(inp && inp.value);
+    } catch (e) {}
+    if (!done) fill();
+    if (done || tries > 12) {
+      clearInterval(timer);
+      if (!done) {
+        try {
+          var ss = parent.sessionStorage;
+          if (!ss.getItem('jaso_ck_restored')) {
+            ss.setItem('jaso_ck_restored', '1');
+            parent.location.reload();
+          }
+        } catch (e) {}
+      }
+    }
+  }, 400);
+})();
 </script>""", height=0)
     except Exception:
         pass
