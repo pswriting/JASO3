@@ -52,6 +52,7 @@ if _bg_mp4 or _bg_webm:
 else:
     st.markdown(styles.video_background("app/static/bg.mp4"), unsafe_allow_html=True)
 st.markdown(styles.overlay_div(), unsafe_allow_html=True)
+st.markdown(styles.menu_button_html(), unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────
 # 세션 상태 초기화
@@ -127,6 +128,91 @@ def _docs_text(cap: int = 12000) -> str:
     return "\n\n".join(parts)[:cap]
 
 
+def _spec_dict() -> dict:
+    """이력서 양식(직접 입력) + 추가 경험 메모 → 소재 발굴 재료."""
+    spec = {SPEC_FIELDS[k]: st.session_state.get(f"sp_{k}", "") for k in SPEC_FIELDS}
+    extra = str(st.session_state.get("in_extra_exp", "")).strip()
+    if extra:
+        spec["추가 경험·경력 메모"] = extra
+    return spec
+
+
+def _handle_uploads(ups) -> None:
+    """이력서 파일 업로드 → 텍스트 추출. 새 파일이 추가되면 자동 소재 발굴 예약."""
+    if not ups:
+        return
+    added = False
+    for up in ups:
+        sig = f"{up.name}-{up.size}"
+        if sig in st.session_state.doc_sigs:
+            continue
+        with st.spinner(f"'{up.name}' 내용을 추출하는 중…"):
+            text, warn = reader.extract_text(up.name, up.getvalue())
+        st.session_state.doc_sigs.append(sig)
+        if text.strip():
+            st.session_state.uploaded_docs.append(
+                {"name": up.name, "text": text[:8000],
+                 "chars": len(text), "warn": warn})
+            added = True
+        else:
+            st.warning(f"{up.name}: {warn or '텍스트를 추출하지 못했습니다.'}")
+    if added:
+        st.session_state["_auto_mine"] = True  # 기본 동작: 올리면 바로 발굴
+        st.rerun()
+
+
+def _mine_now(rerun: bool = True) -> bool:
+    """업로드된 이력서 + 직접 입력 양식에서 소재 발굴 실행."""
+    spec = _spec_dict()
+    has_spec = any(str(v).strip() for v in spec.values())
+    if not st.session_state.uploaded_docs and not has_spec:
+        st.warning("이력서 파일을 올리거나, '이력서 양식으로 직접 입력'을 채워 주세요. 그게 발굴 재료가 됩니다.")
+        return False
+    with st.spinner("이력서에서 자소서 소재를 캐내는 중… (30초~1분)"):
+        try:
+            st.session_state.materials = engine.mine_materials(
+                engine.get_client(api_key), model,
+                st.session_state.get("in_company", ""),
+                st.session_state.get("in_role", ""),
+                _docs_text(), spec,
+                st.session_state.research_md,
+                engine.fit_summary_text(st.session_state.fit) if st.session_state.fit else "")
+        except engine.EngineError as e:
+            st.error(str(e))
+            return False
+    if rerun:
+        st.rerun()
+    return True
+
+
+def _consume_auto_mine():
+    """업로드 직후 자동 발굴 — API 키가 없으면 안내만."""
+    if not st.session_state.pop("_auto_mine", False):
+        return
+    if api_key.strip():
+        _mine_now()
+    else:
+        st.info("파일 추출 완료 — 사이드바에 Anthropic API 키를 입력하면, 다음부터는 올리는 즉시 소재 발굴까지 자동으로 진행됩니다.")
+
+
+def _uploaded_docs_list(key_prefix: str = ""):
+    """업로드된 파일 목록 + 삭제/미리보기."""
+    for i, d in enumerate(st.session_state.uploaded_docs):
+        dc = st.columns([7, 1])
+        with dc[0]:
+            warn_txt = f"  ·  ⚠ {d['warn']}" if d.get("warn") else ""
+            st.markdown(f"📄 **{d['name']}** — {d['chars']:,}자 추출됨{warn_txt}")
+        with dc[1]:
+            if st.button("삭제", key=f"{key_prefix}deldoc_{i}", use_container_width=True):
+                st.session_state.uploaded_docs.pop(i)
+                st.rerun()
+    if st.session_state.uploaded_docs:
+        with st.expander("추출된 내용 미리보기"):
+            for d in st.session_state.uploaded_docs:
+                st.markdown(f"**{d['name']}**")
+                st.text(d["text"][:1200] + ("…" if len(d["text"]) > 1200 else ""))
+
+
 def _new_question(text: str = "", limit: int = 700, is_freeform: bool = False):
     st.session_state.q_seq += 1
     qid = st.session_state.q_seq
@@ -166,6 +252,7 @@ def _export_session() -> str:
             "company": st.session_state.get("in_company", ""),
             "role": st.session_state.get("in_role", ""),
             "posting": st.session_state.get("in_posting", ""),
+            "extra_exp": st.session_state.get("in_extra_exp", ""),
         },
         "spec": {k: st.session_state.get(f"sp_{k}", "") for k in SPEC_FIELDS},
         "questions": [_collect_question(q["id"]) for q in st.session_state.questions],
@@ -184,6 +271,7 @@ def _import_session(data: dict):
     st.session_state["in_company"] = basic.get("company", "")
     st.session_state["in_role"] = basic.get("role", "")
     st.session_state["in_posting"] = basic.get("posting", "")
+    st.session_state["in_extra_exp"] = basic.get("extra_exp", "")
     for k, v in data.get("spec", {}).items():
         st.session_state[f"sp_{k}"] = v
     st.session_state.questions = []
@@ -409,10 +497,10 @@ with st.sidebar:
     st.markdown("---")
     with st.expander("ℹ️ 사용 순서"):
         st.markdown(
-            "1. **기업 분석** — 회사·직무 입력 후 실시간 분석\n"
-            "2. **적합도 진단** — 스펙 입력, 합격 가능성 판별\n"
-            "3. **소재 발굴** — 이력서 파일만 올리면 AI가 소재 발굴\n"
-            "4. **자소서 생성** — 문항마다 소재 불러오기/경험 입력 후 생성,\n   AI 감지·유사도 검사\n"
+            "1. **이력서·소재 발굴** — 이력서 파일만 올리면 소재 자동 발굴\n   (파일이 없으면 이력서 양식으로 직접 입력)\n"
+            "2. **기업 분석** — 회사·직무 실시간 분석 (지원동기의 근거)\n"
+            "3. **적합도 진단** — 합격 가능성 판별\n"
+            "4. **자소서 생성** — 문항마다 소재 불러와 생성,\n   AI 감지·유사도 검사 (소재 발굴도 이 안에서 가능)\n"
             "5. **완성본** — 검토 후 DOCX/TXT 다운로드")
 
 # ──────────────────────────────────────────────
@@ -421,9 +509,9 @@ with st.sidebar:
 st.markdown(styles.hero_html(), unsafe_allow_html=True)
 
 STEP_TITLES = {
-    1: "①  기업 분석",
-    2: "②  적합도 진단",
-    3: "③  소재 발굴",
+    1: "①  이력서·소재 발굴",
+    2: "②  기업 분석",
+    3: "③  적합도 진단",
     4: "④  자소서 생성",
     5: "⑤  완성본",
 }
@@ -451,10 +539,10 @@ def _require_key() -> bool:
 
 
 # ══════════════════════════════════════════════
-# ① 기업 분석
+# ② 기업 분석
 # ══════════════════════════════════════════════
-if _step == 1:
-    st.markdown(styles.overline("01", "기업 실시간 분석", "웹 검색 + DART 전자공시"), unsafe_allow_html=True)
+if _step == 2:
+    st.markdown(styles.overline("02", "기업 실시간 분석", "웹 검색 + DART 전자공시"), unsafe_allow_html=True)
     st.caption("지원할 회사의 최신 뉴스·실적·인재상을 실시간으로 조사해 지원동기의 '근거'를 만듭니다.")
 
     c1, c2 = st.columns(2)
@@ -575,11 +663,12 @@ if _step == 1:
 
 
 # ══════════════════════════════════════════════
-# ② 직무 적합도 진단
+# ③ 직무 적합도 진단
 # ══════════════════════════════════════════════
-if _step == 2:
-    st.markdown(styles.overline("02", "직무 적합도 진단", "서류 심사관의 눈으로"), unsafe_allow_html=True)
-    st.caption("스펙을 입력하면 지원 직무 기준으로 합격 가능성을 판별하고, 자소서에 쓸 소재까지 추천합니다.")
+if _step == 3:
+    st.markdown(styles.overline("03", "직무 적합도 진단", "서류 심사관의 눈으로"), unsafe_allow_html=True)
+    st.caption("스펙을 입력하면 지원 직무 기준으로 합격 가능성을 판별하고, 자소서에 쓸 소재까지 추천합니다. "
+               "①단계에서 '이력서 양식으로 직접 입력'을 채웠다면 그대로 여기에 들어와 있습니다.")
 
     cols = st.columns(3)
     keys = list(SPEC_FIELDS.items())
@@ -645,61 +734,57 @@ if _step == 2:
 
 
 # ══════════════════════════════════════════════
-# ③ 소재 발굴
+# ① 이력서·소재 발굴 (메인)
 # ══════════════════════════════════════════════
-if _step == 3:
-    st.markdown(styles.overline("03", "소재 발굴", "파일만 올리면 AI가 캐냅니다"), unsafe_allow_html=True)
-    st.caption("여기서는 타이핑할 필요 없습니다. 파일을 올리고 발굴 버튼만 누르세요. 경험 입력은 ④단계에서 문항마다 한 번만 합니다.")
+if _step == 1:
+    st.markdown(styles.overline("01", "이력서·소재 발굴", "이력서만 올리면, 자소서 소재가 나옵니다"), unsafe_allow_html=True)
+    st.caption("이 프로그램의 핵심 기능입니다. 이력서 파일을 올리면 즉시 소재 발굴까지 자동으로 진행됩니다. "
+               "파일이 없다면 아래 이력서 양식으로 직접 입력하세요. 경험 입력은 ④단계에서 문항마다 한 번만 합니다.")
 
+    c1, c2 = st.columns(2)
+    with c1:
+        st.text_input("지원 기업명 (선택 — 입력하면 소재를 이 회사에 맞게 고릅니다)",
+                      key="in_company", placeholder="예: 한화갤러리아, Applied Materials Korea")
+    with c2:
+        st.text_input("지원 직무 (선택)", key="in_role",
+                      placeholder="예: 영업관리, Customer Support Technician")
+
+    # ── 기본 경로: 이력서 파일 업로드 → 자동 발굴 ──
     with st.container(border=True):
-        st.markdown("**STEP 1 · 재료 파일 올리기** — 이력서·경력기술서·기존 자소서 파일을 올리면 내용을 자동으로 추출해 소재 발굴과 작성에 씁니다.")
+        st.markdown("**📄 이력서 올리기 (기본)** — 이력서·경력기술서·기존 자소서 파일을 올리면 내용을 추출하고, "
+                    "바로 소재 발굴까지 자동으로 이어집니다.")
         ups = st.file_uploader("파일 업로드 (PDF · DOCX · TXT · HWP · HWPX)",
                                type=reader.SUPPORTED, accept_multiple_files=True,
                                key="doc_uploader")
-        if ups:
-            added = False
-            for up in ups:
-                sig = f"{up.name}-{up.size}"
-                if sig in st.session_state.doc_sigs:
-                    continue
-                with st.spinner(f"'{up.name}' 내용을 추출하는 중…"):
-                    text, warn = reader.extract_text(up.name, up.getvalue())
-                st.session_state.doc_sigs.append(sig)
-                if text.strip():
-                    st.session_state.uploaded_docs.append(
-                        {"name": up.name, "text": text[:8000],
-                         "chars": len(text), "warn": warn})
-                    added = True
-                else:
-                    st.warning(f"{up.name}: {warn or '텍스트를 추출하지 못했습니다.'}")
-            if added:
-                st.rerun()
-        for i, d in enumerate(st.session_state.uploaded_docs):
-            dc = st.columns([7, 1])
-            with dc[0]:
-                warn_txt = f"  ·  ⚠ {d['warn']}" if d.get("warn") else ""
-                st.markdown(f"📄 **{d['name']}** — {d['chars']:,}자 추출됨{warn_txt}")
-            with dc[1]:
-                if st.button("삭제", key=f"deldoc_{i}", use_container_width=True):
-                    st.session_state.uploaded_docs.pop(i)
-                    st.rerun()
-        if st.session_state.uploaded_docs:
-            with st.expander("추출된 내용 미리보기"):
-                for d in st.session_state.uploaded_docs:
-                    st.markdown(f"**{d['name']}**")
-                    st.text(d["text"][:1200] + ("…" if len(d["text"]) > 1200 else ""))
+        _handle_uploads(ups)
+        _uploaded_docs_list()
 
-    with st.container(border=True):
-        st.markdown("**STEP 2 · 뭘 써야 할지 막막하다면** — 파일도 경험도 없다고 느껴질 때, "
-                    "기억을 끌어내는 질문을 만들어 드립니다. 질문을 읽다 떠오른 경험은 ④단계 문항 아래 '경험 입력'에 적으세요.")
-        if st.button("🤔  기억 자극 질문 만들기", use_container_width=True) and _require_key():
+    # ── 파일이 없는 사람: 이력서 양식 직접 입력 ──
+    with st.expander("📝  이력서 파일이 없다면 — 이력서 양식으로 직접 입력",
+                     expanded=(not st.session_state.uploaded_docs and not st.session_state.materials)):
+        st.caption("이력서 대신 아래 양식을 채우면 이걸 재료로 소재를 발굴합니다. 채운 내용은 ③ 적합도 진단에도 그대로 쓰입니다.")
+        cols = st.columns(3)
+        for i, (k, label) in enumerate(SPEC_FIELDS.items()):
+            with cols[i % 3]:
+                st.text_area(label, key=f"sp_{k}", height=88)
+
+    # ── 선택: 추가 경험·경력 메모 ──
+    with st.expander("➕  이력서에 없는 경험·경력을 더 넣고 싶다면 (선택)"):
+        st.text_area("자유롭게 적어 주세요 — 아르바이트, 동아리, 실패담, 사이드 프로젝트 등 이력서에 못 넣은 이야기일수록 좋은 소재가 됩니다.",
+                     key="in_extra_exp", height=110,
+                     placeholder="예: 편의점 야간 알바 2년 — 발주 데이터를 엑셀로 정리해 폐기율을 절반으로 줄임")
+
+    # ── 도우미: 기억 자극 질문 ──
+    with st.expander("🤔  뭘 써야 할지 막막하다면 — 기억 자극 질문 받기 (선택)"):
+        st.caption("파일도 경험도 없다고 느껴질 때, 기억을 끌어내는 질문을 만들어 드립니다. "
+                   "떠오른 경험은 위 '추가 경험 메모'나 ④단계 문항 아래 '경험 입력'에 적으세요.")
+        if st.button("기억 자극 질문 만들기", use_container_width=True) and _require_key():
             with st.spinner("이 직무에 맞는 기억 자극 질문을 만드는 중…"):
                 try:
-                    spec = {SPEC_FIELDS[k]: st.session_state.get(f"sp_{k}", "") for k in SPEC_FIELDS}
                     st.session_state.helper_qs = engine.memory_questions(
                         engine.get_client(api_key), model,
                         st.session_state.get("in_company", ""),
-                        st.session_state.get("in_role", ""), spec)
+                        st.session_state.get("in_role", ""), _spec_dict())
                 except engine.EngineError as e:
                     st.error(str(e))
         for g in st.session_state.helper_qs:
@@ -708,24 +793,11 @@ if _step == 3:
                 st.markdown(styles.note_box("Q. " + qa.get("q", ""),
                                             "예: " + qa.get("example", "")), unsafe_allow_html=True)
 
-    mine = st.button("⛏️  AI 소재 발굴 시작", type="primary", use_container_width=True)
-    if mine and _require_key():
-        spec = {SPEC_FIELDS[k]: st.session_state.get(f"sp_{k}", "") for k in SPEC_FIELDS}
-        has_spec = any(str(v).strip() for v in spec.values())
-        if not st.session_state.uploaded_docs and not has_spec:
-            st.warning("파일을 올리거나 ②단계에서 스펙을 입력해 주세요. 그게 발굴 재료가 됩니다.")
-        else:
-            with st.spinner("업로드 파일과 스펙에서 자소서 소재를 캐내는 중…"):
-                try:
-                    st.session_state.materials = engine.mine_materials(
-                        engine.get_client(api_key), model,
-                        st.session_state.get("in_company", ""),
-                        st.session_state.get("in_role", ""),
-                        _docs_text(), spec,
-                        st.session_state.research_md,
-                        engine.fit_summary_text(st.session_state.fit) if st.session_state.fit else "")
-                except engine.EngineError as e:
-                    st.error(str(e))
+    _consume_auto_mine()
+
+    mine_label = "🔄  소재 다시 발굴하기" if st.session_state.materials else "⛏️  AI 소재 발굴 시작"
+    if st.button(mine_label, type="primary", use_container_width=True) and _require_key():
+        _mine_now()
 
     if st.session_state.materials:
         st.markdown(styles.divider(), unsafe_allow_html=True)
@@ -736,7 +808,8 @@ if _step == 3:
     else:
         st.markdown(styles.empty_state(
             "아직 발굴된 소재가 없습니다",
-            "파일을 올리고 'AI 소재 발굴 시작'을 누르면, 문항 유형별로 쓸 수 있는 경험 소재를 초안까지 만들어 드립니다."),
+            "이력서 파일을 올리면 자동으로 발굴됩니다. 파일이 없다면 이력서 양식을 채우고 'AI 소재 발굴 시작'을 눌러 주세요. "
+            "문항 유형별로 쓸 수 있는 경험 소재를 초안까지 만들어 드립니다."),
             unsafe_allow_html=True)
 
 
@@ -746,6 +819,26 @@ if _step == 3:
 if _step == 4:
     st.markdown(styles.overline("04", "자소서 생성", "문항마다 경험을 넣고, 그 자리에서 생성"), unsafe_allow_html=True)
     st.caption("실제 공고의 문항을 붙여넣고 → 그 문항에 쓸 경험을 입력한 뒤 → 생성하세요. AI 감지 검사와 휴먼라이징까지 한 화면에서 끝납니다.")
+
+    # ── 이 단계 안에서도 소재 발굴 가능 ──
+    _mat_n = len(st.session_state.materials)
+    _mine_label = (f"⛏  소재 발굴 — 현재 {_mat_n}개 발굴됨 (이력서 추가·재발굴 가능)"
+                   if _mat_n else "⛏  소재 발굴 — 이력서를 올리면 여기서 바로 발굴됩니다")
+    with st.expander(_mine_label, expanded=False):
+        st.caption("①단계로 돌아갈 필요 없습니다. 여기서 이력서를 올리거나 발굴을 다시 돌리면, 아래 문항의 '소재 불러오기'에 바로 반영됩니다.")
+        ups_q = st.file_uploader("이력서 파일 추가 (PDF · DOCX · TXT · HWP · HWPX)",
+                                 type=reader.SUPPORTED, accept_multiple_files=True,
+                                 key="doc_uploader_q")
+        _handle_uploads(ups_q)
+        _uploaded_docs_list(key_prefix="q_")
+        _consume_auto_mine()
+        if st.button("🔄  소재 다시 발굴하기" if _mat_n else "⛏️  AI 소재 발굴 시작",
+                     key="mine_in_q", use_container_width=True) and _require_key():
+            _mine_now()
+        if st.session_state.materials:
+            st.markdown("**발굴된 소재** — 각 문항의 '소재 불러오기'에서 선택하세요.")
+            for m in st.session_state.materials:
+                st.markdown(f"- **{m.get('title', '')}** — {m.get('summary', '')[:80]}")
 
     st.markdown("**문항 빠른 추가**")
     pc = st.columns(6)
@@ -789,7 +882,7 @@ if _step == 4:
 
             # ── 이 문항 전용 경험 입력 (유일한 경험 입력 창구) ──
             filled = _exp_filled_count(qid)
-            exp_label = f"🧩  이 문항에 쓸 경험 입력 — {filled}/{len(EXP_FIELDS)} 채움" if filled else "🧩  이 문항에 쓸 경험 입력 (③에서 발굴한 소재로 자동 채울 수 있어요)"
+            exp_label = f"🧩  이 문항에 쓸 경험 입력 — {filled}/{len(EXP_FIELDS)} 채움" if filled else "🧩  이 문항에 쓸 경험 입력 (①에서 발굴한 소재로 자동 채울 수 있어요)"
             with st.expander(exp_label, expanded=(filled == 0 and idx == 1)):
                 if st.session_state.materials:
                     st.selectbox(
@@ -797,7 +890,7 @@ if _step == 4:
                         ["직접 입력"] + [m.get("title", "") for m in st.session_state.materials],
                         key=f"q_mat_{qid}", on_change=_fill_exp_from_material, args=(qid,))
                 else:
-                    st.caption("③단계에서 파일을 올려 소재를 발굴하면, 여기서 한 번에 불러올 수 있습니다.")
+                    st.caption("위의 '⛏ 소재 발굴'에서 이력서를 올려 소재를 발굴하면, 여기서 한 번에 불러올 수 있습니다.")
                 for f, label, ph in EXP_FIELDS:
                     st.text_area(label, key=f"q_exp_{qid}_{f}", height=72, placeholder=ph)
 

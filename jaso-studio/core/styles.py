@@ -68,7 +68,11 @@ h1, h2, h3 {{
 .stMarkdown p, .stMarkdown li, .stMarkdown td {{ color: #ECE8DB; }}
 .stMarkdown strong {{ color: {INK}; }}
 .stMarkdown a {{ color: {GOLD}; }}
-[data-testid="stHeader"] {{ background: transparent; }}
+[data-testid="stHeader"] {{ background: transparent; pointer-events: none; }}
+[data-testid="stHeader"] button, [data-testid="stHeader"] [role="button"],
+[data-testid="stHeader"] [data-testid="stSidebarCollapsedControl"] {{
+    pointer-events: auto;
+}}
 #MainMenu, footer, [data-testid="stToolbar"] {{ visibility: hidden; }}
 /* 사이드바 접힘/펼침 버튼 — 어두운 배경에서도 항상 보이게 */
 [data-testid="stSidebarCollapsedControl"],
@@ -92,6 +96,31 @@ h1, h2, h3 {{
 [data-testid="stSidebarCollapsedControl"] span,
 [data-testid="stExpandSidebarButton"] span {{
     color: {GOLD} !important;
+}}
+/* 내장 펼침 버튼이 호버 시에만 나타나는 버전 대응 — 항상 표시 */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stExpandSidebarButton"] {{
+    opacity: 1 !important;
+    transform: none !important;
+    display: block !important;
+}}
+/* 자체 '메뉴 열기' 버튼 — 사이드바가 접혀 있을 때만 표시 */
+.js-menu-btn {{
+    display: none;
+    position: fixed; bottom: 24px; left: 16px; z-index: 1000001; /* 헤더와 겹치지 않는 좌하단 */
+    width: 44px; height: 44px;
+    align-items: center; justify-content: center;
+    background: rgba(12,20,37,.9);
+    border: 1px solid rgba(201,169,106,.6);
+    border-radius: 999px;
+    color: {GOLD}; font-size: 19px; font-weight: 700;
+    cursor: pointer; user-select: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,.45);
+}}
+.js-menu-btn:hover {{ background: rgba(201,169,106,.25); color: #FFF; }}
+body:has(section[data-testid="stSidebar"][aria-expanded="false"]) .js-menu-btn,
+body:not(:has(section[data-testid="stSidebar"])) .js-menu-btn {{
+    display: flex;
 }}
 [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p,
 .stCaption, small {{ color: {MUTED} !important; }}
@@ -482,6 +511,17 @@ def overlay_div() -> str:
     return '<div class="js-bgoverlay"></div>'
 
 
+def menu_button_html() -> str:
+    """사이드바가 접혔을 때 다시 여는 자체 버튼 (내장 버튼 미표시 환경 대비)."""
+    js = ("var b=document.querySelector('[data-testid=stSidebarCollapsedControl] button')"
+          "||document.querySelector('[data-testid=stSidebarCollapsedControl]')"
+          "||document.querySelector('[data-testid=stExpandSidebarButton]')"
+          "||document.querySelector('[data-testid=stHeader] button')"
+          "||document.querySelector('section[data-testid=stSidebar] button');"
+          "if(b){b.click();}")
+    return (f'<div class="js-menu-btn" title="메뉴 열기" onclick="{js}">☰</div>')
+
+
 def video_background(video_src: str = "app/static/bg.mp4",
                      poster_src: str = "") -> str:
     """정적 서빙 경로용 폴백 (오버레이 별도)."""
@@ -542,7 +582,7 @@ def hero_html() -> str:
 <div class="js-hero">
   <div class="brand">JASO STUDIO</div>
   <h1>읽는 순간, 뽑고 싶어지는<br>자기소개서를 만듭니다</h1>
-  <div class="tagline">실시간 기업 분석 · 직무 적합도 진단 · AI 감지 방어 — 첨삭 전문가의 기준 그대로</div>
+  <div class="tagline">이력서만 올리면 소재 발굴부터 완성까지 — 실시간 기업 분석 · AI 감지 방어 · 첨삭 전문가의 기준 그대로</div>
   <div class="rule"></div>
 </div>"""
 
