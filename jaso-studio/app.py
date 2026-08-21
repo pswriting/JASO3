@@ -667,27 +667,32 @@ if _step == 1:
 # ══════════════════════════════════════════════
 if _step == 2:
     st.markdown(styles.overline("02", "이력서·소재 발굴", "이력서만 올리면, 자소서 소재가 나옵니다"), unsafe_allow_html=True)
-    st.caption("이 프로그램의 핵심 기능입니다. 이력서 파일을 올리면 즉시 소재 발굴까지 자동으로 진행됩니다. "
-               "파일이 없다면 아래 이력서 양식으로 직접 입력하세요. 경험 입력은 ③단계에서 문항마다 한 번만 합니다.")
+    st.caption("이 프로그램의 핵심 기능입니다. 아래 두 방법 중 **하나만** 하면 됩니다. 경험 입력은 ③단계에서 문항마다 한 번만 합니다.")
 
-    # ── 기본 경로: 이력서 파일 업로드 → 자동 발굴 ──
-    with st.container(border=True):
-        st.markdown("**📄 이력서 올리기 (기본)** — 이력서·경력기술서·기존 자소서 파일을 올리면 내용을 추출하고, "
-                    "바로 소재 발굴까지 자동으로 이어집니다.")
-        ups = st.file_uploader("파일 업로드 (PDF · DOCX · TXT · HWP · HWPX)",
-                               type=reader.SUPPORTED, accept_multiple_files=True,
-                               key="doc_uploader")
-        _handle_uploads(ups)
-        _uploaded_docs_list()
+    # ── 이력서 넣는 방법 선택 — 둘 중 하나만 ──
+    _mode = st.radio("이력서를 어떻게 넣을까요? (둘 중 하나만 선택)",
+                     ["📄 이력서 파일이 있어요 — 올리기만 하면 끝", "📝 파일이 없어요 — 양식에 직접 입력"],
+                     key="in_resume_mode", horizontal=True)
 
-    # ── 파일이 없는 사람: 이력서 양식 직접 입력 ──
-    with st.expander("📝  이력서 파일이 없다면 — 이력서 양식으로 직접 입력",
-                     expanded=(not st.session_state.uploaded_docs and not st.session_state.materials)):
-        st.caption("이력서 대신 아래 양식을 채우면 이걸 재료로 소재를 발굴합니다.")
-        cols = st.columns(3)
-        for i, (k, label) in enumerate(SPEC_FIELDS.items()):
-            with cols[i % 3]:
-                st.text_area(label, key=f"sp_{k}", height=88)
+    if _mode.startswith("📄"):
+        with st.container(border=True):
+            st.markdown("**이력서 파일 올리기** — 이력서·경력기술서·기존 자소서 파일을 올리면 내용을 추출하고, "
+                        "바로 소재 발굴까지 자동으로 이어집니다. 아래 양식은 채울 필요 없습니다.")
+            ups = st.file_uploader("파일 업로드 (PDF · DOCX · TXT · HWP · HWPX)",
+                                   type=reader.SUPPORTED, accept_multiple_files=True,
+                                   key="doc_uploader")
+            _handle_uploads(ups)
+            _uploaded_docs_list()
+    else:
+        with st.container(border=True):
+            st.markdown("**이력서 양식으로 직접 입력** — 파일 업로드는 필요 없습니다. "
+                        "아는 항목만 채워도 됩니다. 이 내용이 그대로 소재 발굴 재료가 됩니다.")
+            cols = st.columns(3)
+            for i, (k, label) in enumerate(SPEC_FIELDS.items()):
+                with cols[i % 3]:
+                    st.text_area(label, key=f"sp_{k}", height=88)
+        if st.session_state.uploaded_docs:
+            st.caption(f"ℹ️ 이미 올려둔 파일 {len(st.session_state.uploaded_docs)}개도 발굴에 함께 쓰입니다.")
 
     # ── 선택: 추가 경험·경력 메모 ──
     with st.expander("➕  이력서에 없는 경험·경력을 더 넣고 싶다면 (선택)"):
